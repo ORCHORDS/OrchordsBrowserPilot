@@ -126,6 +126,10 @@ function consoleSeverityRank(level: string): number {
   return CONSOLE_LEVEL_ORDER.indexOf(normalized as (typeof CONSOLE_LEVEL_ORDER)[number]);
 }
 
+function isSuccessfulStaticResource(request: { status: number; type: string }): boolean {
+  return request.status >= 200 && request.status < 400 && STATIC_RESOURCE_TYPES.has(request.type);
+}
+
 export function createDiagnostics(): SessionDiagnostics {
   const consoleBuf: Array<{ level: string; text: string; at: number }> = [];
   const netBuf: Array<{ url: string; method: string; status: number; type: string }> = [];
@@ -150,7 +154,7 @@ export function createDiagnostics(): SessionDiagnostics {
     },
     network(includeStatic, limit) {
       return netBuf
-        .filter((request) => includeStatic || !STATIC_RESOURCE_TYPES.has(request.type))
+        .filter((request) => includeStatic || !isSuccessfulStaticResource(request))
         .slice(-limit);
     },
     get bounded() {
