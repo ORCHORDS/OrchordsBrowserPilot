@@ -16,4 +16,15 @@ describe("network static-resource filtering (#19)", () => {
       ["xhr"],
     );
   });
+
+  it("keeps failed static requests visible when static=false", () => {
+    const diagnostics = createDiagnostics();
+    diagnostics.onRequestFinished("https://example.test/app.js", "GET", 200, "script");
+    diagnostics.onRequestFailed("https://example.test/broken.js", "GET", "script");
+
+    assert.deepEqual(
+      diagnostics.network(false, 20).map((request) => ({ type: request.type, status: request.status })),
+      [{ type: "script", status: 0 }],
+    );
+  });
 });
