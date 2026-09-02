@@ -11,3 +11,7 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(() => {
   logLifecycle("started");
 });
+
+chrome.action.onClicked.addListener(() => {
+  logLifecycle("one-time tab access granted by user gesture");
+});
