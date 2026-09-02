@@ -16,6 +16,8 @@ test("extension foundation is a permission-minimal Manifest V3 package", async (
     background?: { service_worker?: string; type?: string };
     permissions?: string[];
     host_permissions?: string[];
+    externally_connectable?: unknown;
+    content_security_policy?: { extension_pages?: string };
   };
   const pkg = JSON.parse(await readFile(packagePath, "utf8")) as { version?: string };
 
@@ -29,9 +31,16 @@ test("extension foundation is a permission-minimal Manifest V3 package", async (
   await access(path.join(repoRoot, "extension", manifest.background!.service_worker!));
 
   assert.equal(manifest.host_permissions, undefined);
+  assert.equal(manifest.externally_connectable, undefined);
   const permissions = manifest.permissions ?? [];
   for (const permission of ["debugger", "nativeMessaging", "scripting", "tabs", "webRequest"]) {
     assert.equal(permissions.includes(permission), false, `foundation must not request ${permission}`);
   }
   assert.equal(permissions.includes("<all_urls>"), false);
+
+  const extensionCsp = manifest.content_security_policy?.extension_pages ?? "";
+  assert.equal(extensionCsp, "script-src 'self'; object-src 'self';");
+  assert.equal(extensionCsp.includes("'unsafe-eval'"), false);
+  assert.equal(extensionCsp.includes("'unsafe-inline'"), false);
+  assert.equal(/https?:\/\//.test(extensionCsp), false);
 });

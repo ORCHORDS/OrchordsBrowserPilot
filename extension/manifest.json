@@ -10,5 +10,8 @@
   },
   "action": {
     "default_title": "Orchords Web Pilot"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self';"
   }
 }
