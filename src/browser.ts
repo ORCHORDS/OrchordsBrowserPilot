@@ -119,6 +119,7 @@ export interface SessionDiagnostics {
 const CONSOLE_CAP = 1000;
 const NETWORK_CAP = 2000;
 const CONSOLE_LEVEL_ORDER = ["debug", "log", "info", "warn", "error"] as const;
+const STATIC_RESOURCE_TYPES = new Set(["script", "stylesheet", "image", "font"]);
 
 function consoleSeverityRank(level: string): number {
   const normalized = level === "warning" ? "warn" : level;
@@ -148,7 +149,9 @@ export function createDiagnostics(): SessionDiagnostics {
         .slice(-limit);
     },
     network(includeStatic, limit) {
-      return netBuf.filter(r => includeStatic || r.type !== "static").slice(-limit);
+      return netBuf
+        .filter((request) => includeStatic || !STATIC_RESOURCE_TYPES.has(request.type))
+        .slice(-limit);
     },
     get bounded() {
       return { console: CONSOLE_CAP, network: NETWORK_CAP };
