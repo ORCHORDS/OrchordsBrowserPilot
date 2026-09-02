@@ -1,17 +1,19 @@
 name: Daily Build
 
-# Smoke test against today's Node.js LTS + latest Playwright on hosted runner.
-# Its job is to catch drift between pinned actions and upstream Node/Playwright
-# versions before it shows up in main-verification.
+# Scheduled compatibility smoke against the current stable Playwright release.
+# The repository lockfile is tested on every main push; this lane deliberately
+# overrides Playwright with the npm `latest` tag so upstream drift is detected
+# before the supported range or lockfile is changed.
 on:
   schedule:
     - cron: '23 4 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  smoke:
+  latest-playwright:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -24,16 +26,24 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install + build
+      - name: Install locked dependencies then current stable Playwright
         shell: bash
         run: |
           set -euo pipefail
           npm ci
-          npm run build
+          npm install --no-save --package-lock=false playwright@latest
+          node -e "console.log('Testing Playwright', require('./node_modules/playwright/package.json').version)"
 
-      - name: Install Playwright Chromium
+      - name: Install current stable Chromium
         shell: bash
         run: npx playwright install --with-deps chromium
+
+      - name: Build + compatibility/browser smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+          node --test --import tsx test/playwright-compatibility.test.ts test/e2e-stdio.test.ts
 
       - name: HTTP transport smoke
         shell: bash
@@ -41,6 +51,12 @@ jobs:
           set -euo pipefail
           PILOT_TRANSPORT=http PILOT_HTTP_PORT=8788 node dist/cli.js &
           PID=$!
-          sleep 2
-          curl -fsS http://127.0.0.1:8788/mcp/health
-          kill $PID
+          trap 'kill $PID 2>/dev/null || true' EXIT
+          for _ in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8788/mcp/health; then
+              exit 0
+            fi
+            sleep 0.25
+          done
+          echo 'HTTP health endpoint did not become ready' >&2
+          exit 1
