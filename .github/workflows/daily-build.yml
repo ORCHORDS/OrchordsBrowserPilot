@@ -1,17 +1,18 @@
 name: Daily Build
 
-# Smoke test against today's Node.js LTS + latest Playwright.
+# Smoke test against today's Node.js LTS + latest Playwright on hosted runner.
+# Its job is to catch drift between pinned actions and upstream Node/Playwright
+# versions before it shows up in main-verification.
 on:
   schedule:
     - cron: '23 4 * * *'
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   smoke:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

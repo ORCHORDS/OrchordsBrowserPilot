@@ -36,7 +36,7 @@ class RemoteBrowserManager implements BrowserManager {
   constructor(private readonly wsEndpoint: string, private readonly headless: boolean) {}
 
   async page(): Promise<Page> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const remote = await (chromium as any).connect(this.wsEndpoint, { headless: this.headless });
     const context = await remote.newContext();
     const page = await context.newPage();

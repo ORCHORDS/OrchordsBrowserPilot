@@ -1,6 +1,7 @@
 name: Dependency Audit
 
-# Keep workflow_dispatch available for current-head revalidation after CI repairs.
+# Run on main only. Scheduled re-runs against the trusted lane.
+# Hosted runner — no `ubuntu-slim` label is registered here.
 on:
   push:
     branches: [main]
@@ -10,15 +11,13 @@ on:
       - '.github/workflows/dependency-audit.yml'
   schedule:
     - cron: '17 2 * * 1'
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   npm-audit:
-    # Short audit jobs fit comfortably in the slim container (1 CPU, 15-min cap).
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

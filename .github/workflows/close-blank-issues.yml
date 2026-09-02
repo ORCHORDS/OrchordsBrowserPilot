@@ -9,10 +9,10 @@ permissions:
 
 jobs:
   close:
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Close issues with no body after 24h
+      - name: Close issues with no body
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash

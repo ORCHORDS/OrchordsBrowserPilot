@@ -35,8 +35,7 @@ export const snapshot: ToolDef = {
   schema: z.object({}).passthrough(),
   handler: async (_args, ctx) => {
     const p = await page(ctx);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const snap = await (p.accessibility as any).snapshot();
+    const snap = await p.ariaSnapshot();
     return { snapshot: snap };
   },
 };
@@ -184,7 +183,7 @@ export const evaluate: ToolDef = {
   handler: async (args, ctx) => {
     const { expression } = args as { expression: string };
     const p = await page(ctx);
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+     
     const fn = new Function(`"use strict"; return (${expression});`);
     const result = await p.evaluate(fn as never);
     return { result };

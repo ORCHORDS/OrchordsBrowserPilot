@@ -1,0 +1,9 @@
+# CODEOWNERS
+# All changes require review from a member of the @ORCHORDS/maintainers team
+# before they can land on main.
+*       @ORCHORDS/maintainers
+
+# Workflows and CI changes require a runner-maintainer review on top of the
+# default review so we don't accidentally swap the trusted lane to a
+# GitHub-hosted runner.
+.github/                @ORCHORDS/runner-maintainers

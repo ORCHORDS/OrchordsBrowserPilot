@@ -1,5 +1,15 @@
 name: Main Verification
 
+# Only verification lane for ORCHORDS/orchords-web-pilot.
+#
+# Policy: no branches, no PR-only lane. All work lands on `main` via a merge
+# queue (or rebase-merge). CI runs once against the exact SHA that becomes
+# HEAD, on a GitHub-hosted `ubuntu-latest` runner. Why hosted:
+#   - the repo has no registered self-hosted runner today
+#   - the prior ORCHORDS repo (OrchordsAI) only registers one self-hosted
+#     runner (codeql-java) for a Java/Kotlin-specific CodeQL leg; that label
+#     does not exist here and a Node/Playwright workload doesn't fit it
+#   - hosted runners give us ephemeral, isolated Linux for every merge
 on:
   push:
     branches: [main]
@@ -7,14 +17,6 @@ on:
       - '**/*.md'
       - 'docs/**'
       - 'LICENSE'
-  pull_request:
-    branches: [main]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'LICENSE'
-  merge_group:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -23,18 +25,13 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   queue: single
-  # PRs: newest verification replaces the running one for fast feedback.
-  # Main/merge_group: let the in-flight trusted run finish so the required
-  # check reports for that exact SHA and the persistent runner keeps a
-  # complete workspace for the queued run. Pattern from
-  # ORCHORDS/W.A.S.P ci.yml.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Always let the in-flight trusted run finish so the required check
+  # reports for that exact SHA. A forced cancel would let a fresh push
+  # race a check for a different SHA.
 
 jobs:
-  # Tests run in a parallel job so a broken push fails fast while the
-  # install job is still in flight.
   test:
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'main-verification' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout repository
@@ -63,7 +60,7 @@ jobs:
           npm test
 
   package:
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'main-verification' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout repository
