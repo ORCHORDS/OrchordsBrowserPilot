@@ -144,12 +144,10 @@ describe("E2E per-session operation serialization (P1 #104)", () => {
       elapsed >= waitTime * 2 * 1000 - 200, // 200ms scheduler slack
       `expected sequential execution (>= ${waitTime * 2}s), got ${elapsed}ms`,
     );
-    // And shouldn't be wildly longer than 2 × waitTime — that's the soft
-    // bound on per-session dispatch latency.
-    assert.ok(
-      elapsed <= waitTime * 2 * 1000 + 1500,
-      `expected near 2x wait (got ${elapsed}ms) — queue may have added extra latency`,
-    );
+    // No wall-clock upper bound here. Node's test runner executes test files
+    // concurrently by default, so host/CI contention can stretch elapsed
+    // time without indicating extra queue latency. Bounded queue wait is
+    // exercised deterministically in the dedicated OperationQueue tests.
   });
 
   it("rapid-fire concurrent calls all complete in order without errors", async () => {

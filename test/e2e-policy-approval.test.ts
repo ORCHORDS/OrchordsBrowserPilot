@@ -176,16 +176,13 @@ describe("E2E policy approvals + queued TOCTOU (#81/#104)", () => {
   });
 
   it("invalidates an approved action when live page state drifts while it waits in the session queue", async () => {
-    const navigated = await client.callTool("browser_navigate", {
-      url: "data:text/html,<title>policy-race</title><p>safe</p>",
-    });
+    // Use a normal about:blank document for the drift fixture. `data:` URLs
+    // are opaque/nonstandard top-level URLs and are a poor same-document
+    // navigation fixture. A fragment update on about:blank is an ordinary
+    // same-document URL change that Playwright reports through frame
+    // navigation state.
+    const navigated = await client.callTool("browser_navigate", { url: "about:blank" });
     assert.equal(navigated.isError, false, navigated.text);
-
-    const waitArgs = { time: 0.6 };
-    const waitProposal = await propose("browser_wait", waitArgs);
-    assert.equal(waitProposal.requiresApproval, true);
-    assert.equal(waitProposal.riskClass, "irreversible");
-    const waitApproval = await approve(waitProposal);
 
     const targetArgs = {
       expression: "(() => { globalThis.__shouldNotRun = true; return 42; })()",
@@ -206,13 +203,12 @@ describe("E2E policy approvals + queued TOCTOU (#81/#104)", () => {
     );
     assert.equal(scheduled.isError, false, scheduled.text);
 
+    // Occupy the single session slot with a read-only wait. The already-
+    // approved target is submitted while that wait owns the slot, so the
+    // page-side timer changes the URL after approval but before target gate.
     const waitCall = client.send("tools/call", {
       name: "browser_wait",
-      arguments: {
-        ...waitArgs,
-        _proposalId: waitProposal.proposalId,
-        _approval: waitApproval.approvalId,
-      },
+      arguments: { time: 0.6 },
     });
     await new Promise((resolve) => setTimeout(resolve, 50));
     const targetCall = client.send("tools/call", {
@@ -234,13 +230,19 @@ describe("E2E policy approvals + queued TOCTOU (#81/#104)", () => {
     assert.equal(blocked.blocked, true);
     assert.equal(blocked.reason, "envelope_changed");
 
-    // Prove the delayed sensitive expression did not execute. This check is
-    // itself freshly proposed/approved against the post-drift page state.
-    const checkArgs = { expression: "Boolean(globalThis.__shouldNotRun)" };
+    // Prove both sides of the race: the page state really did drift, and the
+    // delayed sensitive expression did not execute. This check is freshly
+    // proposed/approved against the post-drift state.
+    const checkArgs = {
+      expression: "({ hash: location.hash, ran: Boolean(globalThis.__shouldNotRun) })",
+    };
     const checkProposal = await propose("browser_evaluate", checkArgs);
     const checkApproval = await approve(checkProposal);
     const checked = await dispatchApproved("browser_evaluate", checkArgs, checkProposal, checkApproval);
     assert.equal(checked.isError, false, checked.text);
-    assert.equal(parseJson<{ result: boolean }>(checked).result, false);
+    assert.deepEqual(
+      parseJson<{ result: { hash: string; ran: boolean } }>(checked).result,
+      { hash: "#changed", ran: false },
+    );
   });
 });
