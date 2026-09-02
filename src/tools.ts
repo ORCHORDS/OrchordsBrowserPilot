@@ -96,7 +96,7 @@ export const clickTool: ToolDef = {
 
 export const typeTool: ToolDef = {
   name: "browser_type",
-  description: "Type text into the focused, matched, or ref-targeted element.",
+  description: "Type text into the focused, matched, or ref-targeted element using keyboard events.",
   schema: z.object({
     text: z.string(),
     ref: z.string().optional(),
@@ -113,13 +113,14 @@ export const typeTool: ToolDef = {
       submit?: boolean;
     };
     const p = await page(ctx);
+    const typingOptions = slowly ? { delay: 50 } : undefined;
     if (ref) {
       const loc = resolveRef(p, ctx.session.refs, ref);
-      await loc.fill(text);
+      await loc.pressSequentially(text, typingOptions);
     } else if (selector) {
-      await p.fill(selector, text);
+      await p.locator(selector).pressSequentially(text, typingOptions);
     } else {
-      await p.keyboard.type(text, slowly ? { delay: 50 } : undefined);
+      await p.keyboard.type(text, typingOptions);
     }
     if (submit) await p.keyboard.press("Enter");
     return { ok: true };
