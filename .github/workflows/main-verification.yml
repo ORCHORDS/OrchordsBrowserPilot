@@ -51,6 +51,10 @@ jobs:
         shell: bash
         run: npm ci
 
+      - name: Install Playwright browser
+        shell: bash
+        run: npx playwright install --with-deps chromium
+
       - name: Lint + type-check + tests
         shell: bash
         run: |
