@@ -15,10 +15,13 @@ jobs:
       - name: Close issues with no body
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         shell: bash
         run: |
           set -euo pipefail
-          ISSUE_BODY="${{ github.event.issue.body }}"
+          # ISSUE_BODY and ISSUE_NUMBER are passed via env to avoid bash
+          # interpreting issue contents (backticks, $(...), etc.) as code.
           if [[ -z "${ISSUE_BODY// }" ]]; then
-            gh issue close "${{ github.event.issue.number }}" --comment "Closing blank issue. Please reopen with a description and reproduction steps."
+            gh issue close "${ISSUE_NUMBER}" --comment "Closing blank issue. Please reopen with a description and reproduction steps."
           fi
