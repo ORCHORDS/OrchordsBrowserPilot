@@ -18,7 +18,12 @@ const cliPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "d
 
 interface JsonRpcResponse {
   id?: number;
-  result?: { content?: Array<{ type: string; text: string }>; isError?: boolean; tools?: unknown[]; serverInfo?: { name: string } };
+  result?: {
+    content?: Array<{ type: string; text: string }>;
+    isError?: boolean;
+    tools?: unknown[];
+    serverInfo?: { name: string };
+  };
   error?: { message: string };
 }
 
@@ -95,10 +100,14 @@ describe("E2E stdio (P0 #1 state persistence + #2 ref resolution)", () => {
     client.kill();
   });
 
-  it("lists 15 tools with valid JSON Schemas", async () => {
+  it("lists 17 tools with valid JSON Schemas", async () => {
     const res = await client.rpc("tools/list", {});
     const tools = res.result?.tools as Array<{ name: string; inputSchema: Record<string, unknown> }>;
-    assert.equal(tools.length, 15);
+    assert.equal(tools.length, 17);
+    // #81 policy plumbing must be part of the advertised surface.
+    const names = tools.map((t) => t.name);
+    assert.ok(names.includes("browser_propose_action"), "browser_propose_action tool missing");
+    assert.ok(names.includes("browser_approve_action"), "browser_approve_action tool missing");
     for (const t of tools) {
       assert.equal(t.inputSchema.type, "object", `${t.name} inputSchema.type`);
       assert.ok("properties" in t.inputSchema, `${t.name} inputSchema.properties`);
@@ -153,7 +162,7 @@ describe("E2E stdio (P0 #1 state persistence + #2 ref resolution)", () => {
     assert.equal(res.isError, false);
     const body = JSON.parse(res.text) as { messages: Array<{ text: string }> };
     assert.ok(
-      body.messages.some(msg => msg.text.includes("hello-from-e2e")),
+      body.messages.some((msg) => msg.text.includes("hello-from-e2e")),
       "console buffer should contain the page's console.log",
     );
   });
