@@ -4,10 +4,10 @@
 
 # Orchords Web Pilot
 
-[![Main verification](https://github.com/ORCHORDS/orchords-web-pilot/actions/workflows/main-verification.yml/badge.svg)](https://github.com/ORCHORDS/orchords-web-pilot/actions/workflows/main-verification.yml)
-[![Daily build](https://github.com/ORCHORDS/orchords-web-pilot/actions/workflows/daily-build.yml/badge.svg)](https://github.com/ORCHORDS/orchords-web-pilot/actions/workflows/daily-build.yml)
-[![CodeQL](https://github.com/ORCHORDS/orchords-web-pilot/actions/workflows/codeql.yml/badge.svg)](https://github.com/ORCHORDS/orchords-web-pilot/actions/workflows/codeql.yml)
-[![Dependency audit](https://github.com/ORCHORDS/orchords-web-pilot/actions/workflows/dependency-audit.yml/badge.svg)](https://github.com/ORCHORDS/orchords-web-pilot/actions/workflows/dependency-audit.yml)
+[![Main verification](https://github.com/ORCHORDS/OrchordsBrowserPilot/actions/workflows/main-verification.yml/badge.svg)](https://github.com/ORCHORDS/OrchordsBrowserPilot/actions/workflows/main-verification.yml)
+[![Daily build](https://github.com/ORCHORDS/OrchordsBrowserPilot/actions/workflows/daily-build.yml/badge.svg)](https://github.com/ORCHORDS/OrchordsBrowserPilot/actions/workflows/daily-build.yml)
+[![CodeQL](https://github.com/ORCHORDS/OrchordsBrowserPilot/actions/workflows/codeql.yml/badge.svg)](https://github.com/ORCHORDS/OrchordsBrowserPilot/actions/workflows/codeql.yml)
+[![Dependency audit](https://github.com/ORCHORDS/OrchordsBrowserPilot/actions/workflows/dependency-audit.yml/badge.svg)](https://github.com/ORCHORDS/OrchordsBrowserPilot/actions/workflows/dependency-audit.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 > ⭐ If you like Orchords Web Pilot or find it useful, please consider starring this repository. It helps more people discover the project.
@@ -49,8 +49,8 @@ npm install -g orchords-web-pilot
 Or run it straight from a checkout:
 
 ```bash
-git clone https://github.com/ORCHORDS/orchords-web-pilot.git
-cd orchords-web-pilot
+git clone https://github.com/ORCHORDS/OrchordsBrowserPilot.git
+cd OrchordsBrowserPilot
 npm install
 npm run build
 npm start
@@ -151,7 +151,7 @@ Pass the token back into any interaction tool: `browser_click({ "ref": "e3" })`.
 
 ### HTTP transport security
 
-The HTTP endpoint is hardened by default ([#43](https://github.com/ORCHORDS/orchords-web-pilot/issues/43)):
+The HTTP endpoint is hardened by default ([#43](https://github.com/ORCHORDS/OrchordsBrowserPilot/issues/43)):
 
 - **Origin validation** — any request carrying an `Origin` header must match the allowlist (loopback variants by default) or it is rejected with `403`. This blocks malicious websites from driving your local browser via `fetch` against `localhost:8788`, including sandboxed `null` origins.
 - **Host validation** — `Host` must match the bound host or the allowlist, defeating DNS-rebinding attacks.

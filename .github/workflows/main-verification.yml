@@ -1,6 +1,6 @@
 name: Main Verification
 
-# Only verification lane for ORCHORDS/orchords-web-pilot.
+# Only verification lane for ORCHORDS/OrchordsBrowserPilot.
 #
 # Policy: no branches, no PR-only lane. All work lands on `main` via a merge
 # queue (or rebase-merge). CI runs once against the exact SHA that becomes
