@@ -6,41 +6,36 @@ import { digestEnvelope } from "./digest.js";
 import type { LiveStateSnapshot } from "./gate.js";
 
 /**
- * Tool definitions for the policy layer (issue #81). These three tools let
- * a coding-agent / model propose an action, get an envelope + risk class,
- * request (or grant) an approval, and dispatch — all with deterministic
- * digest binding. Primitive tools (`browser_click`, `browser_navigate`,
- * etc.) are gated at the dispatch layer in server.ts; they are not
- * reimplemented here.
+ * Tool definitions for the policy layer (issue #81). These tools let a
+ * coding-agent / model propose an action, get an envelope + risk class, and
+ * mint a one-time approval whose digest is rechecked by the primitive tool
+ * dispatch in server.ts.
  *
  * The semantic envelope returned by `browser_propose_action` is the same
  * envelope the gate digests at dispatch time — proposals and dispatches
  * share one canonical representation, so the approval UI and the executor
- * are looking at the same bytes.
+ * are looking at the same normalized bytes.
  */
 
 export interface PolicyToolContext extends ToolContext {
   gate: ActionGate;
-  liveState: (tool: string, args: Record<string, unknown>) => LiveStateSnapshot;
+  liveState: (
+    tool: string,
+    args: Record<string, unknown>,
+  ) => LiveStateSnapshot | Promise<LiveStateSnapshot>;
+  normalizeActionArguments: (
+    tool: string,
+    args: Record<string, unknown>,
+  ) => Record<string, unknown>;
   /** Caller identity for approval rows — defaults to "user" for stdio,
    *  the authenticated principal for HTTP (wired by server.ts). */
   approverId?: string;
 }
 
-function toArgs(input: Record<string, unknown>): Record<string, unknown> {
-  // Strip undefined so the canonical envelope is stable across clients
-  // that send different shapes.
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(input)) {
-    if (v !== undefined) out[k] = v;
-  }
-  return out;
-}
-
 export const proposeAction: ToolDef = {
   name: "browser_propose_action",
   description:
-    "Build a canonical proposed-action envelope for a primitive tool call, classify its risk, and return the envelope + SHA-256 digest. Use the returned envelope as the basis for any human approval flow. The primitive tool will not execute until `browser_dispatch_action` is called with a matching approval id.",
+    "Build a canonical proposed-action envelope for a primitive tool call, classify its risk, and return the envelope + SHA-256 digest. If approval is required, call browser_approve_action and then invoke the primitive tool with the returned approval id and proposal id.",
   schema: z
     .object({
       tool: z.string().describe("The primitive tool name (e.g. `browser_click`) that will be dispatched."),
@@ -60,7 +55,7 @@ export const proposeAction: ToolDef = {
     })
     .passthrough(),
   handler: async (args, ctx) => {
-    const { gate, liveState } = ctx as PolicyToolContext;
+    const { gate, liveState, normalizeActionArguments, session } = ctx as PolicyToolContext;
     const a = args as {
       tool: string;
       arguments: Record<string, unknown>;
@@ -69,11 +64,16 @@ export const proposeAction: ToolDef = {
       workflowId?: string;
       secrets?: Array<{ id: string; version: number; versionHash: string }>;
     };
-    const live = liveState(a.tool, a.arguments);
+    // Proposal-time state and argument normalization must be the same
+    // server-owned model that dispatch later re-resolves. Placeholder session
+    // ids, empty URLs, or unparsed/default-less arguments make an unchanged
+    // action's digest impossible to reproduce.
+    const normalizedArguments = normalizeActionArguments(a.tool, a.arguments);
+    const live = await liveState(a.tool, normalizedArguments);
     const result = gate.propose({
-      sessionId: a.tool, // placeholder; server.ts substitutes the real session id
+      sessionId: session.id,
       tool: a.tool,
-      arguments: toArgs(a.arguments),
+      arguments: normalizedArguments,
       live,
       formAction: a.formAction,
       formMethod: a.formMethod,
@@ -143,10 +143,8 @@ export const approveAction: ToolDef = {
 
 /**
  * Resolve a digest to the last envelope that produced it, when the
- * proposal was made in this session. We use the in-memory ring buffer
- * inside the gate's `MemoryAuditSink` (when configured) as a side
- * channel; production builds would store proposals in the durable
- * metadata layer (issue #73).
+ * proposal was made in this session. We use the per-server proposal cache;
+ * production durable approval metadata remains tracked by #73/#52.
  */
 function stubEnvelopeForDigest(targetDigest: string, ctx: ToolContext): ProposedActionEnvelope | null {
   const proposals = (ctx as PolicyToolContext & { proposals?: Map<string, ProposedActionEnvelope> })

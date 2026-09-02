@@ -234,20 +234,25 @@ export function buildServer(
     });
   };
 
-  /** Resolve the live page URL / frame URL / origin for the gate. */
-  const liveState = (_tool: string, _args: Record<string, unknown>): LiveStateSnapshot => {
-    // `page()` is async; the gate's propose() is sync. We snapshot the
-    // best info we have without launching a browser: an empty URL is
-    // treated as "unknown" by the risk classifier (downgrades to read
-    // by default). The dispatch path passes the live snapshot it
-    // itself captured right before invoking the handler.
-    return {
-      pageUrl: "",
-      frameUrl: "",
-      effectiveUrl: "",
-      origin: "",
-      liveSecretVersions: {},
-    };
+  /** Proposal and dispatch must observe the same server-owned live-state model. */
+  const liveState = (tool: string, args: Record<string, unknown>): Promise<LiveStateSnapshot> =>
+    resolveLiveSnapshot(session, tool, args);
+
+  /**
+   * Canonicalize primitive arguments through the primitive's real Zod schema.
+   * Reserved policy plumbing is extracted/stripped before parsing because Zod
+   * object schemas strip unknown keys by default; proposal and dispatch must
+   * digest the same normalized argument bytes.
+   */
+  const normalizeActionArguments = (
+    toolName: string,
+    rawArgs: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    const target = allTools.find((candidate) => candidate.name === toolName);
+    if (!target) throw new Error(`Unknown primitive tool: ${toolName}`);
+    const parsed = target.schema.parse(stripReservedArgs(rawArgs));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, unknown>;
   };
 
   const policyToolsByName = new Map(policyTools.map((t) => [t.name, t]));
@@ -338,6 +343,7 @@ export function buildServer(
           ...baseCtx,
           gate,
           liveState,
+          normalizeActionArguments,
           proposals,
           approverId: "user",
         } as ToolContext)) as { proposalId?: string; envelope?: ProposedActionEnvelope };
@@ -364,12 +370,11 @@ export function buildServer(
     const baseCtx: ToolContext = { session };
     const extendedCtx = { ...baseCtx, solver } as ToolContext & { solver: typeof solver };
     try {
-      const parsed = tool.schema.parse(args);
-      const argsRecord = (parsed ?? {}) as Record<string, unknown>;
-      const approvalId =
-        typeof argsRecord._approval === "string" ? (argsRecord._approval as string) : undefined;
-      const proposalId =
-        typeof argsRecord._proposalId === "string" ? (argsRecord._proposalId as string) : undefined;
+      const rawArgs = asRecord(args);
+      const approvalId = typeof rawArgs._approval === "string" ? rawArgs._approval : undefined;
+      const proposalId = typeof rawArgs._proposalId === "string" ? rawArgs._proposalId : undefined;
+      const argsRecord = normalizeActionArguments(name, rawArgs);
+      const parsed = argsRecord;
       const live = await resolveLiveSnapshot(session, name, argsRecord);
 
       // Use the cached proposal envelope when present; otherwise mint an
@@ -380,7 +385,7 @@ export function buildServer(
         proposal = gate.propose({
           sessionId: session.id,
           tool: name,
-          arguments: stripReservedArgs(argsRecord),
+          arguments: argsRecord,
           live,
           proposalId,
         }).envelope;
@@ -471,7 +476,10 @@ async function resolveLiveSnapshot(
       frameUrl = main.url();
       try {
         const u = new URL(effectiveUrl);
-        origin = u.port ? `${u.protocol}//${u.host}` : `${u.protocol}//${u.host}`;
+        // Opaque origins (`data:`, `about:`, `file:`) report `null`; leave
+        // origin empty so the risk classifier falls back to effectiveUrl and
+        // preserves its scheme-level risk instead of parsing a synthetic URL.
+        origin = u.origin === "null" ? "" : u.origin;
       } catch {
         origin = "";
       }
@@ -486,6 +494,12 @@ async function resolveLiveSnapshot(
 
 function summarize(env: ProposedActionEnvelope): string {
   return summarizeEnvelope(env);
+}
+
+function asRecord(args: unknown): Record<string, unknown> {
+  return args && typeof args === "object" && !Array.isArray(args)
+    ? (args as Record<string, unknown>)
+    : {};
 }
 
 /**
