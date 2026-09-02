@@ -79,12 +79,25 @@ jobs:
       - name: Install minimum-version Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Build and exercise minimum-version browser path
+      - name: Build and exercise minimum-version source path
         run: |
           set -euo pipefail
           node -e "const p=require('./node_modules/playwright/package.json'); if(p.version !== '1.59.1') throw new Error('expected Playwright 1.59.1, got '+p.version)"
           npm run build
           node --test --import tsx test/playwright-compatibility.test.ts test/e2e-stdio.test.ts
+
+      - name: Pack, install cleanly, and exercise the published artifact at minimum version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARBALL="$(npm pack --silent)"
+          FIXTURE="$(mktemp -d)"
+          trap 'rm -rf "$FIXTURE"' EXIT
+          cd "$FIXTURE"
+          npm init -y >/dev/null 2>&1
+          npm install --ignore-scripts "$GITHUB_WORKSPACE/$TARBALL" playwright@1.59.1
+          node -e "const p=require('./node_modules/playwright/package.json'); if(p.version !== '1.59.1') throw new Error('packed fixture expected Playwright 1.59.1, got '+p.version)"
+          node "$GITHUB_WORKSPACE/test/package-smoke.mjs" "$FIXTURE/node_modules/orchords-web-pilot/dist/cli.js"
 
   package:
     runs-on: ubuntu-latest
