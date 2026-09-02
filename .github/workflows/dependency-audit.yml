@@ -1,0 +1,37 @@
+name: Dependency Audit
+
+# Keep workflow_dispatch available for current-head revalidation after CI repairs.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/dependency-audit.yml'
+  schedule:
+    - cron: '17 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-audit:
+    # Short audit jobs fit comfortably in the slim container (1 CPU, 15-min cap).
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Audit production dependency graph
+        shell: bash
+        run: |
+          set -o pipefail
+          npm audit --omit=dev --audit-level=high | tee npm-audit.txt

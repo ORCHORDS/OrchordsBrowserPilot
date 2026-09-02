@@ -1,0 +1,24 @@
+name: Close Blank Issues
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  close:
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    steps:
+      - name: Close issues with no body after 24h
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ISSUE_BODY="${{ github.event.issue.body }}"
+          if [[ -z "${ISSUE_BODY// }" ]]; then
+            gh issue close "${{ github.event.issue.number }}" --comment "Closing blank issue. Please reopen with a description and reproduction steps."
+          fi

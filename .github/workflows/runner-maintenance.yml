@@ -1,0 +1,20 @@
+name: Runner Maintenance
+
+# Remind maintainers that this repo relies on the ORCHORDS-org runner fleet.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reminder:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: List required self-hosted runner labels
+        shell: bash
+        run: |
+          echo "This repository expects the following ORCHORDS self-hosted runner labels:"
+          echo "  - main-verification  (trusted branches + main)"
+          echo "  - codeql-verification (CodeQL analysis job)"
+          echo "  - ubuntu-slim         (short audit jobs)"

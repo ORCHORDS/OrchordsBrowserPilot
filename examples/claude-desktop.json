@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "orchords-web-pilot": {
+      "command": "orchords-web-pilot",
+      "env": {
+        "PILOT_HEADLESS": "true"
+      }
+    }
+  }
+}

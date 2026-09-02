@@ -1,0 +1,88 @@
+name: Main Verification
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+  merge_group:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  queue: single
+  # PRs: newest verification replaces the running one for fast feedback.
+  # Main/merge_group: let the in-flight trusted run finish so the required
+  # check reports for that exact SHA and the persistent runner keeps a
+  # complete workspace for the queued run. Pattern from
+  # ORCHORDS/W.A.S.P ci.yml.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Tests run in a parallel job so a broken push fails fast while the
+  # install job is still in flight.
+  test:
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'main-verification' }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+          clean: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Lint + type-check + tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run lint
+          npm run build
+          npm test
+
+  package:
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'main-verification' }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+          clean: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build production bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          npm pack --dry-run

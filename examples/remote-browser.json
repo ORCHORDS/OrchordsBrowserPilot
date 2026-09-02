@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "orchords-web-pilot": {
+      "command": "orchords-web-pilot",
+      "env": {
+        "BROWSER_WS_ENDPOINT": "wss://chrome.browserless.io?token=YOUR_TOKEN_HERE"
+      }
+    }
+  }
+}

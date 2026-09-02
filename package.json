@@ -1,0 +1,60 @@
+{
+  "name": "orchords-web-pilot",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Orchords Web Pilot — MCP server that lets coding agents drive a real browser.",
+  "type": "module",
+  "bin": {
+    "orchords-web-pilot": "./dist/cli.js"
+  },
+  "main": "./dist/server.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/cli.ts",
+    "start": "node dist/cli.js",
+    "lint": "eslint \"src/**/*.ts\"",
+    "format": "prettier --check \"src/**/*.ts\"",
+    "test": "node --test --import tsx \"test/**/*.test.ts\"",
+    "audit": "npm audit --omit=dev --audit-level=high"
+  },
+  "engines": {
+    "node": ">=20.10"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "playwright": "^1.48.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "@typescript-eslint/eslint-plugin": "^8.8.0",
+    "@typescript-eslint/parser": "^8.8.0",
+    "eslint": "^9.11.0",
+    "prettier": "^3.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "browser",
+    "playwright",
+    "agent",
+    "orchords",
+    "web-pilot"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ORCHORDS/orchords-web-pilot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ORCHORDS/orchords-web-pilot/issues"
+  }
+}

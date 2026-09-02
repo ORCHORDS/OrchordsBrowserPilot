@@ -1,0 +1,62 @@
+name: Branch Verification
+
+# Speculative verification: any branch pushed to this repository is built
+# and tested on the dedicated runner immediately, so results are usually
+# ready before a PR is opened or a human asks. Fork PRs never run here;
+# this trigger only fires for same-repository branches (trusted authors).
+on:
+  push:
+    branches-ignore:
+      - main
+      - 'gh-readonly-queue/**'
+      - 'nightly'
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warmup-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    # Pin to the verification runner (b2) rather than the shared
+    # ubuntu-24.04-x64 label: speculative branch builds must never claim the
+    # CodeQL runner (a1) and switch its persistent workspace away from the
+    # analysis ref, which forces semi-cold rebuilds of the trusted lane.
+    runs-on: main-verification
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+          clean: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Lint + type-check
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run lint
+          npm run build
+
+      - name: Smoke test (no browser)
+        shell: bash
+        run: |
+          set -euo pipefail
+          PILOT_TRANSPORT=stdio npm test
