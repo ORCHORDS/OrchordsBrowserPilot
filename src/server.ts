@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -6,51 +7,110 @@ import express from "express";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
 import type { Config } from "./config.js";
-import { createBrowserManager, type BrowserManager } from "./browser.js";
-import { allTools, installBuffers, type ToolContext } from "./tools.js";
+import { createBrowserManager } from "./browser.js";
+import { allTools, type ToolContext } from "./tools.js";
+import { Session, SessionRegistry } from "./session.js";
 
 export { toolInputSchema };
 
+/**
+ * StdIO transport: single shared session, single client. We still wrap it
+ * in a Session so console/network buffers don't leak across requests — but
+ * the BrowserManager itself is reused for the lifetime of the process.
+ */
 export async function startStdio(config: Config): Promise<void> {
   const manager = createBrowserManager(config.browser.wsEndpoint, config.browser.headless);
-  const server = buildServer(manager, {
-    solver: { url: config.captcha.url, token: config.captcha.token },
-  });
-
+  const solver = { url: config.captcha.url, token: config.captcha.token };
+  const session = new Session("stdio", manager);
   const transport = new StdioServerTransport();
+  const server = buildServer(session, solver);
   await server.connect(transport);
   console.error("orchords-web-pilot (stdio) ready");
+
+  const shutdown = async () => {
+    await session.dispose();
+    await manager.close().catch(() => undefined);
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }
 
+/**
+ * HTTP transport: each Mcp-Session-Id maps to its own Session. Requests
+ * without a session id get a fresh session that lives only for the request
+ * lifetime (no id is returned to the client, so the client cannot reuse it).
+ *
+ * The SessionRegistry is the single point that owns BrowserManager
+ * instances — we share one across sessions that share the same id so
+ * navigate -> snapshot -> click sequences see a stable page, and dispose
+ * the manager when no session still references it.
+ */
 export async function startHttp(config: Config): Promise<void> {
-  const manager = createBrowserManager(config.browser.wsEndpoint, config.browser.headless);
+  const solver = { url: config.captcha.url, token: config.captcha.token };
+  const registry = new SessionRegistry();
 
   const app = express();
   app.use(express.json({ limit: "10mb" }));
 
   app.post(config.http.path, async (req, res) => {
+    const incomingId = headerString(req.headers["mcp-session-id"]);
+    const sessionId = incomingId ?? randomUUID();
+    const session = registry.getOrCreate(sessionId, id => {
+      const manager = createBrowserManager(config.browser.wsEndpoint, config.browser.headless);
+      return new Session(id, manager);
+    });
+
     const transport = new StreamableHTTPServerTransport({
-      // Stateless per-request session — fits an MCP gateway use case.
-      sessionIdGenerator: undefined,
+      sessionIdGenerator: () => sessionId,
     });
-    const server = buildServer(manager, {
-      solver: { url: config.captcha.url, token: config.captcha.token },
+
+    const server = buildServer(session, solver);
+    res.on("close", () => {
+      transport.close().catch(() => undefined);
     });
-    res.on("close", () => transport.close().catch(() => undefined));
-    await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } finally {
+      // If the request did NOT advertise a session id (stateless gateway
+      // mode), drop the freshly created session so it doesn't pin a browser
+      // forever. Reused sessions are kept alive by their lastUsed timestamp.
+      if (!incomingId) {
+        await registry.dispose(sessionId).catch(() => undefined);
+      }
+    }
   });
 
   app.get(`${config.http.path}/health`, (_req, res) => {
-    res.json({ ok: true, name: "orchords-web-pilot", transport: "http" });
+    res.json({ ok: true, name: "orchords-web-pilot", transport: "http", sessions: registry.size() });
   });
+
+  // Periodically sweep idle sessions — at most once a minute.
+  const sweep = setInterval(() => {
+    registry.sweep().catch(() => undefined);
+  }, 60_000);
+  sweep.unref();
+
+  const shutdown = async () => {
+    clearInterval(sweep);
+    await registry.disposeAll();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 
   app.listen(config.http.port, config.http.host, () => {
     console.error(`orchords-web-pilot (http) listening on http://${config.http.host}:${config.http.port}${config.http.path}`);
   });
 }
 
-function buildServer(manager: BrowserManager, extraCtx: Partial<ToolContext & { solver: { url?: string; token?: string } }>) {
+function headerString(v: string | string[] | undefined): string | undefined {
+  if (Array.isArray(v)) return v[0];
+  return v && v.length > 0 ? v : undefined;
+}
+
+function buildServer(session: Session, solver: { url?: string; token?: string }) {
   const server = new Server(
     {
       name: "orchords-web-pilot",
@@ -75,12 +135,10 @@ function buildServer(manager: BrowserManager, extraCtx: Partial<ToolContext & { 
     if (!tool) {
       return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
     }
-    const page = await manager.page();
-    await installBuffers(page);
-    const ctx: ToolContext = { manager };
+    const ctx: ToolContext = { session };
     try {
       const parsed = tool.schema.parse(args);
-      const result = await tool.handler(parsed, { ...ctx, ...(extraCtx as object) });
+      const result = await tool.handler(parsed, { ...ctx, solver } as ToolContext & { solver: typeof solver });
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

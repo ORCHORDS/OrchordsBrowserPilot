@@ -105,7 +105,7 @@ otherwise it spins up a local browser.
 | ----------------------- | ----------------------------------------------------------- |
 | `browser_navigate`      | Open a URL.                                                 |
 | `browser_snapshot`      | Return an accessibility tree (preferred for agent planning).|
-| `browser_click`         | Click by ref, selector, or coordinate.                      |
+| `browser_click`         | Click by `ref` (from snapshot), selector, or coordinate.    |
 | `browser_type`          | Type into the focused element.                              |
 | `browser_fill`          | Set an input value directly.                                |
 | `browser_press`         | Press a key (Enter, Tab, Escape, arrow keys…).              |
@@ -114,11 +114,29 @@ otherwise it spins up a local browser.
 | `browser_select`        | Choose an `<option>` in a `<select>`.                       |
 | `browser_screenshot`    | Capture PNG (returns base64 or saves to disk).              |
 | `browser_evaluate`      | Run a JS expression in the page context.                    |
-| `browser_console`       | Read console messages since the page loaded.                |
-| `browser_network`       | List captured network requests with bodies.                 |
+| `browser_console`       | Read console messages captured for this session.            |
+| `browser_network`       | List network requests captured for this session.            |
 | `browser_wait`          | Wait for text, selector, or a fixed duration.               |
-| `browser_tabs`          | List / open / close / switch tabs.                          |
 | `browser_captcha_solve` | Plug into an external captcha-solving service.              |
+
+### Snapshot refs
+
+`browser_snapshot` returns an accessibility tree in which every interactive node carries a `ref` token, e.g.:
+
+```yaml
+- generic [active] [ref=e1]:
+  - heading "Settings" [level=1] [ref=e2]
+  - button "Save" [ref=e3]
+  - textbox "Email" [ref=e4]
+```
+
+Pass the token back into any interaction tool: `browser_click({ "ref": "e3" })`. Refs are resolved to scoped Playwright locators (role + accessible name + occurrence index), so they work even when CSS selectors would be brittle.
+
+**Ref lifetime.** Refs are valid from the moment `browser_snapshot` returns until the next navigation (or another snapshot replaces them). After a `browser_navigate`, all previous refs are invalidated. Using an invalidated ref returns a structured error (`Ref 'eN' is no longer valid…`) rather than clicking the wrong element — take a fresh `browser_snapshot` and retry.
+
+**Fallback.** Every interaction tool also accepts a raw CSS `selector` (and `browser_click` accepts `x`/`y` coordinates). Prefer refs for agent flows; use selectors only when you already know the DOM.
+
+**Sessions.** Each MCP session owns its own page, console buffer, and network buffer. On the HTTP transport, sessions are keyed by the `Mcp-Session-Id` header; on stdio there is a single session for the process lifetime. Console and network diagnostics never leak across sessions.
 
 > The captcha-solver tool is a hook: it reads `PILOT_CAPTCHA_SOLVER_URL` and `PILOT_CAPTCHA_SOLVER_TOKEN` and forwards the challenge. Wire in your own provider (2Captcha, AntiCaptcha, your own microservice) — the MVP does not ship a default to keep the licensing surface clean.
 

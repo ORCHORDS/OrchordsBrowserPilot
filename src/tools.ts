@@ -1,9 +1,9 @@
 import { z } from "zod";
-import type { Page } from "playwright";
-import type { BrowserManager } from "./browser.js";
+import type { Session } from "./session.js";
+import { resolveRef } from "./refs.js";
 
 export interface ToolContext {
-  manager: BrowserManager;
+  session: Session;
 }
 
 export interface ToolDef {
@@ -13,8 +13,13 @@ export interface ToolDef {
   handler: (args: unknown, ctx: ToolContext) => Promise<unknown>;
 }
 
+/** Solver config forwarded from server.ts into the captcha tool. */
+export interface SolverConfig {
+  solver?: { url?: string; token?: string };
+}
+
 async function page(ctx: ToolContext) {
-  return ctx.manager.page();
+  return ctx.session.page();
 }
 
 export const navigate: ToolDef = {
@@ -25,24 +30,29 @@ export const navigate: ToolDef = {
     const { url } = args as { url: string };
     const p = await page(ctx);
     await p.goto(url, { waitUntil: "domcontentloaded" });
+    ctx.session.clearRefs();
     return { ok: true, url: p.url() };
   },
 };
 
 export const snapshot: ToolDef = {
   name: "browser_snapshot",
-  description: "Return the accessibility tree for the current page.",
+  description:
+    "Return the AI-oriented accessibility snapshot for the current page. Each node carries a `ref` token (e.g. `[ref=e23]`) that can be passed back into browser_click/browser_type/etc. Refs are invalidated on navigation.",
   schema: z.object({}).passthrough(),
   handler: async (_args, ctx) => {
     const p = await page(ctx);
-    const snap = await p.ariaSnapshot();
-    return { snapshot: snap };
+    const yamlText = await p.ariaSnapshot({ mode: "ai" });
+    const { registered } = ctx.session.refs.ingest(yamlText, p);
+    ctx.session.noteSnapshotTaken();
+    return { snapshot: yamlText, refs: registered };
   },
 };
 
 export const clickTool: ToolDef = {
   name: "browser_click",
-  description: "Click an element identified by ref (from snapshot), selector, or x,y coordinates.",
+  description:
+    "Click an element identified by a snapshot ref, CSS selector, or x+y coordinates. Prefer `ref` from browser_snapshot.",
   schema: z.object({
     ref: z.string().optional(),
     selector: z.string().optional(),
@@ -54,12 +64,13 @@ export const clickTool: ToolDef = {
   handler: async (args, ctx) => {
     const { ref, selector, x, y } = args as { ref?: string; selector?: string; x?: number; y?: number };
     const p = await page(ctx);
-    if (selector) {
+    if (ref) {
+      const loc = resolveRef(p, ctx.session.refs, ref);
+      await loc.click();
+    } else if (selector) {
       await p.click(selector);
     } else if (x !== undefined && y !== undefined) {
       await p.mouse.click(x, y);
-    } else if (ref) {
-      await p.click(`[aria-ref="${ref}"]`);
     }
     return { ok: true };
   },
@@ -67,17 +78,23 @@ export const clickTool: ToolDef = {
 
 export const typeTool: ToolDef = {
   name: "browser_type",
-  description: "Type text into the focused or matched element.",
+  description: "Type text into the focused, matched, or ref-targeted element.",
   schema: z.object({
     text: z.string(),
+    ref: z.string().optional(),
     selector: z.string().optional(),
     slowly: z.boolean().optional(),
     submit: z.boolean().optional(),
   }),
   handler: async (args, ctx) => {
-    const { text, selector, slowly, submit } = args as { text: string; selector?: string; slowly?: boolean; submit?: boolean };
+    const { text, ref, selector, slowly, submit } = args as {
+      text: string; ref?: string; selector?: string; slowly?: boolean; submit?: boolean;
+    };
     const p = await page(ctx);
-    if (selector) {
+    if (ref) {
+      const loc = resolveRef(p, ctx.session.refs, ref);
+      await loc.fill(text);
+    } else if (selector) {
       await p.fill(selector, text);
     } else {
       await p.keyboard.type(text, slowly ? { delay: 50 } : undefined);
@@ -89,12 +106,18 @@ export const typeTool: ToolDef = {
 
 export const fill: ToolDef = {
   name: "browser_fill",
-  description: "Replace an input value via the accessibility API (no key events).",
-  schema: z.object({ selector: z.string(), value: z.string() }),
+  description: "Replace an input value via Playwright's fill() — accepts a selector or a snapshot ref.",
+  schema: z.object({ ref: z.string().optional(), selector: z.string().optional(), value: z.string() })
+    .refine(v => v.ref || v.selector, { message: "Provide ref or selector" }),
   handler: async (args, ctx) => {
-    const { selector, value } = args as { selector: string; value: string };
+    const { ref, selector, value } = args as { ref?: string; selector?: string; value: string };
     const p = await page(ctx);
-    await p.fill(selector, value);
+    if (ref) {
+      const loc = resolveRef(p, ctx.session.refs, ref);
+      await loc.fill(value);
+    } else if (selector) {
+      await p.fill(selector, value);
+    }
     return { ok: true };
   },
 };
@@ -113,37 +136,66 @@ export const press: ToolDef = {
 
 export const hover: ToolDef = {
   name: "browser_hover",
-  description: "Hover an element.",
-  schema: z.object({ selector: z.string() }),
+  description: "Hover an element. Accepts a snapshot ref or a selector.",
+  schema: z.object({ ref: z.string().optional(), selector: z.string().optional() })
+    .refine(v => v.ref || v.selector, { message: "Provide ref or selector" }),
   handler: async (args, ctx) => {
-    const { selector } = args as { selector: string };
+    const { ref, selector } = args as { ref?: string; selector?: string };
     const p = await page(ctx);
-    await p.hover(selector);
+    if (ref) {
+      const loc = resolveRef(p, ctx.session.refs, ref);
+      await loc.hover();
+    } else if (selector) {
+      await p.hover(selector);
+    }
     return { ok: true };
   },
 };
 
 export const drag: ToolDef = {
   name: "browser_drag",
-  description: "Drag from one element to another.",
-  schema: z.object({ from: z.string(), to: z.string() }),
+  description: "Drag from one element to another. Accepts snapshot refs or selectors.",
+  schema: z.object({
+    fromRef: z.string().optional(),
+    fromSelector: z.string().optional(),
+    toRef: z.string().optional(),
+    toSelector: z.string().optional(),
+  }).refine(v => (v.fromRef || v.fromSelector) && (v.toRef || v.toSelector), {
+    message: "Provide fromRef/fromSelector AND toRef/toSelector",
+  }),
   handler: async (args, ctx) => {
-    const { from, to } = args as { from: string; to: string };
+    const { fromRef, fromSelector, toRef, toSelector } = args as {
+      fromRef?: string; fromSelector?: string; toRef?: string; toSelector?: string;
+    };
     const p = await page(ctx);
-    await p.dragAndDrop(from, to);
+    if (fromRef && toRef) {
+      const from = resolveRef(p, ctx.session.refs, fromRef);
+      const to = resolveRef(p, ctx.session.refs, toRef);
+      await from.dragTo(to);
+    } else if (fromSelector && toSelector) {
+      await p.dragAndDrop(fromSelector, toSelector);
+    }
     return { ok: true };
   },
 };
 
 export const select: ToolDef = {
   name: "browser_select",
-  description: "Select an <option> by value or label.",
-  schema: z.object({ selector: z.string(), value: z.string().optional(), label: z.string().optional() }),
+  description: "Select an <option> by value or label. Accepts a snapshot ref or a selector.",
+  schema: z.object({
+    ref: z.string().optional(),
+    selector: z.string().optional(),
+    value: z.string().optional(),
+    label: z.string().optional(),
+  }).refine(v => v.ref || v.selector, { message: "Provide ref or selector" }),
   handler: async (args, ctx) => {
-    const { selector, value, label } = args as { selector: string; value?: string; label?: string };
+    const { ref, selector, value, label } = args as {
+      ref?: string; selector?: string; value?: string; label?: string;
+    };
     const p = await page(ctx);
-    if (value) await p.selectOption(selector, value);
-    else if (label) await p.selectOption(selector, { label });
+    const target = ref ? resolveRef(p, ctx.session.refs, ref) : p.locator(selector!);
+    if (value) await target.selectOption(value);
+    else if (label) await target.selectOption({ label });
     else throw new Error("Provide value or label");
     return { ok: true };
   },
@@ -183,7 +235,6 @@ export const evaluate: ToolDef = {
   handler: async (args, ctx) => {
     const { expression } = args as { expression: string };
     const p = await page(ctx);
-     
     const fn = new Function(`"use strict"; return (${expression});`);
     const result = await p.evaluate(fn as never);
     return { result };
@@ -200,7 +251,9 @@ export const wait: ToolDef = {
     selector: z.string().optional(),
   }),
   handler: async (args, ctx) => {
-    const { time, text, textGone, selector } = args as { time?: number; text?: string; textGone?: string; selector?: string };
+    const { time, text, textGone, selector } = args as {
+      time?: number; text?: string; textGone?: string; selector?: string;
+    };
     const p = await page(ctx);
     if (time !== undefined && !text && !textGone && !selector) {
       await p.waitForTimeout(time * 1000);
@@ -215,29 +268,24 @@ export const wait: ToolDef = {
 
 export const consoleTool: ToolDef = {
   name: "browser_console",
-  description: "Subscribe to / read console messages from the page.",
+  description: "Read console messages captured for the current session.",
   schema: z.object({
     level: z.enum(["log", "info", "warn", "error", "debug"]).default("log"),
     limit: z.number().int().positive().max(500).default(100),
   }),
   handler: async (args, ctx) => {
     const { level, limit } = args as { level: "log" | "info" | "warn" | "error" | "debug"; limit: number };
-    const p = pageForConsole(ctx);
-    const filtered = consoleBuffer.filter(m => levelCompare(m.level, level)).slice(-limit);
-    return { messages: filtered };
+    return { messages: ctx.session.diagnostics.console(level, limit) };
   },
 };
 
 export const network: ToolDef = {
   name: "browser_network",
-  description: "List captured network requests since the page loaded.",
-  schema: z.object({ static: z.boolean().default(false) }),
+  description: "List network requests captured for the current session.",
+  schema: z.object({ static: z.boolean().default(false), limit: z.number().int().positive().max(500).default(200) }),
   handler: async (args, ctx) => {
-    const { static: includeStatic } = args as { static: boolean };
-    const p = pageForConsole(ctx);
-    return {
-      requests: networkBuffer.filter(r => includeStatic || r.type !== "static").slice(-200),
-    };
+    const { static: includeStatic, limit } = args as { static: boolean; limit: number };
+    return { requests: ctx.session.diagnostics.network(includeStatic, limit) };
   },
 };
 
@@ -251,7 +299,7 @@ export const captchaSolve: ToolDef = {
   }),
   handler: async (args, ctx) => {
     const { siteKey, pageUrl, type } = args as { siteKey: string; pageUrl: string; type: string };
-    const cfg = (ctx as unknown as { solver?: { url?: string; token?: string } }).solver;
+    const cfg = (ctx as unknown as SolverConfig).solver;
     if (!cfg?.url || !cfg?.token) {
       throw new Error("Captcha solver not configured. Set PILOT_CAPTCHA_SOLVER_URL and PILOT_CAPTCHA_SOLVER_TOKEN.");
     }
@@ -266,36 +314,6 @@ export const captchaSolve: ToolDef = {
     return { token: data.token };
   },
 };
-
-// --- internal helpers for console/network buffering ------------------------------------
-
-const consoleBuffer: Array<{ level: string; text: string; at: number }> = [];
-const networkBuffer: Array<{ url: string; method: string; status: number; type: string }> = [];
-const hooked = new WeakSet<Page>();
-
-function pageForConsole(ctx: ToolContext): Page {
-  // We rely on ctx.manager.page() having already wired the listeners.
-  // The buffer is module-level and shared across calls.
-  return null as unknown as Page;
-}
-
-function levelCompare(actual: string, min: "log" | "info" | "warn" | "error" | "debug"): boolean {
-  const order = ["debug", "log", "info", "warn", "error"];
-  return order.indexOf(actual) >= order.indexOf(min);
-}
-
-export async function installBuffers(p: Page): Promise<void> {
-  if (hooked.has(p)) return;
-  hooked.add(p);
-  p.on("console", (msg) => consoleBuffer.push({ level: msg.type(), text: msg.text(), at: Date.now() }));
-  p.on("requestfinished", async (req) => {
-    const res = await req.response();
-    networkBuffer.push({ url: req.url(), method: req.method(), status: res?.status() ?? 0, type: req.resourceType() });
-  });
-  p.on("requestfailed", (req) => {
-    networkBuffer.push({ url: req.url(), method: req.method(), status: 0, type: req.resourceType() });
-  });
-}
 
 export const allTools: ToolDef[] = [
   navigate,
