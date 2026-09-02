@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ElementHandle, Frame, Page } from "playwright";
+import type { ElementHandle, Page } from "playwright";
 import yaml from "yaml";
 
 type PinnedElement = ElementHandle<SVGElement | HTMLElement>;
@@ -123,10 +123,19 @@ export class RefRegistry {
     try {
       for (const entry of entries) {
         if (entry.snapshotGeneration !== expectedSnapshotGeneration) continue;
-        const frame = frameForUrl(page, entry.frameUrl) ?? page.mainFrame();
-        const locator = frame.getByRole(entry.role as never, { name: entry.name, exact: false });
-        const scoped = entry.index > 0 ? locator.nth(entry.index) : locator;
-        const handle = await scoped.elementHandle();
+        // Playwright's AI snapshot owns the authoritative ref -> element map.
+        // Its aria-ref selector resolves that exact captured element (including
+        // cross-frame fNeN refs) from the snapshot cache. Reconstructing the
+        // target from role/name can wait on, or silently choose, a different
+        // generic element. Source refs are Playwright-generated opaque tokens;
+        // validate their expected grammar before interpolating a selector.
+        if (!/^(?:e\d+|f\d+e\d+)$/.test(entry.sourceRef)) {
+          throw new StaleRefError(entry.ref, "contains an invalid Playwright source ref");
+        }
+        const handle = await page.locator(`aria-ref=${entry.sourceRef}`).elementHandle();
+        if (!handle) {
+          throw new StaleRefError(entry.ref, "could not be resolved to the captured DOM element");
+        }
         const fingerprint = await fingerprintElement(handle);
 
         if (
@@ -245,14 +254,6 @@ export function resolveRef(page: Page, registry: RefRegistry, ref: string): Reso
   const entry = registry.get(ref);
   if (!entry) throw new StaleRefError(ref);
   return new ResolvedRef(page, entry);
-}
-
-function frameForUrl(page: Page, url: string): Frame | null {
-  if (!url) return null;
-  for (const frame of page.frames()) {
-    if (frame.url() === url) return frame;
-  }
-  return null;
 }
 
 /**
