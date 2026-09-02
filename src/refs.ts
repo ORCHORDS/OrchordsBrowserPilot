@@ -197,6 +197,12 @@ export class ResolvedRef {
     await (await this.currentHandle()).fill(value);
   }
 
+  async pressSequentially(text: string, options?: { delay?: number }): Promise<void> {
+    const handle = await this.currentHandle();
+    await handle.focus();
+    await this.page.keyboard.type(text, options);
+  }
+
   async hover(): Promise<void> {
     await (await this.currentHandle()).hover();
   }
