@@ -53,14 +53,16 @@ export const clickTool: ToolDef = {
   name: "browser_click",
   description:
     "Click an element identified by a snapshot ref, CSS selector, or x+y coordinates. Prefer `ref` from browser_snapshot.",
-  schema: z.object({
-    ref: z.string().optional(),
-    selector: z.string().optional(),
-    x: z.number().int().nonnegative().optional(),
-    y: z.number().int().nonnegative().optional(),
-  }).refine(v => v.ref || v.selector || (v.x !== undefined && v.y !== undefined), {
-    message: "Provide one of: ref, selector, or x+y",
-  }),
+  schema: z
+    .object({
+      ref: z.string().optional(),
+      selector: z.string().optional(),
+      x: z.number().int().nonnegative().optional(),
+      y: z.number().int().nonnegative().optional(),
+    })
+    .refine((v) => v.ref || v.selector || (v.x !== undefined && v.y !== undefined), {
+      message: "Provide one of: ref, selector, or x+y",
+    }),
   handler: async (args, ctx) => {
     const { ref, selector, x, y } = args as { ref?: string; selector?: string; x?: number; y?: number };
     const p = await page(ctx);
@@ -88,7 +90,11 @@ export const typeTool: ToolDef = {
   }),
   handler: async (args, ctx) => {
     const { text, ref, selector, slowly, submit } = args as {
-      text: string; ref?: string; selector?: string; slowly?: boolean; submit?: boolean;
+      text: string;
+      ref?: string;
+      selector?: string;
+      slowly?: boolean;
+      submit?: boolean;
     };
     const p = await page(ctx);
     if (ref) {
@@ -107,8 +113,9 @@ export const typeTool: ToolDef = {
 export const fill: ToolDef = {
   name: "browser_fill",
   description: "Replace an input value via Playwright's fill() — accepts a selector or a snapshot ref.",
-  schema: z.object({ ref: z.string().optional(), selector: z.string().optional(), value: z.string() })
-    .refine(v => v.ref || v.selector, { message: "Provide ref or selector" }),
+  schema: z
+    .object({ ref: z.string().optional(), selector: z.string().optional(), value: z.string() })
+    .refine((v) => v.ref || v.selector, { message: "Provide ref or selector" }),
   handler: async (args, ctx) => {
     const { ref, selector, value } = args as { ref?: string; selector?: string; value: string };
     const p = await page(ctx);
@@ -137,8 +144,9 @@ export const press: ToolDef = {
 export const hover: ToolDef = {
   name: "browser_hover",
   description: "Hover an element. Accepts a snapshot ref or a selector.",
-  schema: z.object({ ref: z.string().optional(), selector: z.string().optional() })
-    .refine(v => v.ref || v.selector, { message: "Provide ref or selector" }),
+  schema: z
+    .object({ ref: z.string().optional(), selector: z.string().optional() })
+    .refine((v) => v.ref || v.selector, { message: "Provide ref or selector" }),
   handler: async (args, ctx) => {
     const { ref, selector } = args as { ref?: string; selector?: string };
     const p = await page(ctx);
@@ -155,17 +163,22 @@ export const hover: ToolDef = {
 export const drag: ToolDef = {
   name: "browser_drag",
   description: "Drag from one element to another. Accepts snapshot refs or selectors.",
-  schema: z.object({
-    fromRef: z.string().optional(),
-    fromSelector: z.string().optional(),
-    toRef: z.string().optional(),
-    toSelector: z.string().optional(),
-  }).refine(v => (v.fromRef || v.fromSelector) && (v.toRef || v.toSelector), {
-    message: "Provide fromRef/fromSelector AND toRef/toSelector",
-  }),
+  schema: z
+    .object({
+      fromRef: z.string().optional(),
+      fromSelector: z.string().optional(),
+      toRef: z.string().optional(),
+      toSelector: z.string().optional(),
+    })
+    .refine((v) => (v.fromRef || v.fromSelector) && (v.toRef || v.toSelector), {
+      message: "Provide fromRef/fromSelector AND toRef/toSelector",
+    }),
   handler: async (args, ctx) => {
     const { fromRef, fromSelector, toRef, toSelector } = args as {
-      fromRef?: string; fromSelector?: string; toRef?: string; toSelector?: string;
+      fromRef?: string;
+      fromSelector?: string;
+      toRef?: string;
+      toSelector?: string;
     };
     const p = await page(ctx);
     if (fromRef && toRef) {
@@ -182,15 +195,20 @@ export const drag: ToolDef = {
 export const select: ToolDef = {
   name: "browser_select",
   description: "Select an <option> by value or label. Accepts a snapshot ref or a selector.",
-  schema: z.object({
-    ref: z.string().optional(),
-    selector: z.string().optional(),
-    value: z.string().optional(),
-    label: z.string().optional(),
-  }).refine(v => v.ref || v.selector, { message: "Provide ref or selector" }),
+  schema: z
+    .object({
+      ref: z.string().optional(),
+      selector: z.string().optional(),
+      value: z.string().optional(),
+      label: z.string().optional(),
+    })
+    .refine((v) => v.ref || v.selector, { message: "Provide ref or selector" }),
   handler: async (args, ctx) => {
     const { ref, selector, value, label } = args as {
-      ref?: string; selector?: string; value?: string; label?: string;
+      ref?: string;
+      selector?: string;
+      value?: string;
+      label?: string;
     };
     const p = await page(ctx);
     const target = ref ? resolveRef(p, ctx.session.refs, ref) : p.locator(selector!);
@@ -210,7 +228,11 @@ export const screenshot: ToolDef = {
     element: z.string().optional(),
   }),
   handler: async (args, ctx) => {
-    const { fullPage, savePath, element } = args as { fullPage?: boolean; savePath?: string; element?: string };
+    const { fullPage, savePath, element } = args as {
+      fullPage?: boolean;
+      savePath?: string;
+      element?: string;
+    };
     const p = await page(ctx);
     let buf: Buffer;
     if (element) {
@@ -252,7 +274,10 @@ export const wait: ToolDef = {
   }),
   handler: async (args, ctx) => {
     const { time, text, textGone, selector } = args as {
-      time?: number; text?: string; textGone?: string; selector?: string;
+      time?: number;
+      text?: string;
+      textGone?: string;
+      selector?: string;
     };
     const p = await page(ctx);
     if (time !== undefined && !text && !textGone && !selector) {
@@ -282,7 +307,10 @@ export const consoleTool: ToolDef = {
 export const network: ToolDef = {
   name: "browser_network",
   description: "List network requests captured for the current session.",
-  schema: z.object({ static: z.boolean().default(false), limit: z.number().int().positive().max(500).default(200) }),
+  schema: z.object({
+    static: z.boolean().default(false),
+    limit: z.number().int().positive().max(500).default(200),
+  }),
   handler: async (args, ctx) => {
     const { static: includeStatic, limit } = args as { static: boolean; limit: number };
     return { requests: ctx.session.diagnostics.network(includeStatic, limit) };
@@ -301,7 +329,9 @@ export const captchaSolve: ToolDef = {
     const { siteKey, pageUrl, type } = args as { siteKey: string; pageUrl: string; type: string };
     const cfg = (ctx as unknown as SolverConfig).solver;
     if (!cfg?.url || !cfg?.token) {
-      throw new Error("Captcha solver not configured. Set PILOT_CAPTCHA_SOLVER_URL and PILOT_CAPTCHA_SOLVER_TOKEN.");
+      throw new Error(
+        "Captcha solver not configured. Set PILOT_CAPTCHA_SOLVER_URL and PILOT_CAPTCHA_SOLVER_TOKEN.",
+      );
     }
     const res = await fetch(cfg.url, {
       method: "POST",

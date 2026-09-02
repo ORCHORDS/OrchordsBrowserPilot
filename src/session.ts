@@ -76,12 +76,12 @@ export class Session {
   private installPageListeners(page: Page): void {
     if (this.pageListenersInstalled) return;
     this.pageListenersInstalled = true;
-    page.on("console", msg => this.diagnostics.onConsole(msg));
-    page.on("requestfinished", async req => {
+    page.on("console", (msg) => this.diagnostics.onConsole(msg));
+    page.on("requestfinished", async (req) => {
       const res = await req.response().catch(() => null);
       this.diagnostics.onRequestFinished(req.url(), req.method(), res?.status() ?? 0, req.resourceType());
     });
-    page.on("requestfailed", req => {
+    page.on("requestfailed", (req) => {
       this.diagnostics.onRequestFailed(req.url(), req.method(), req.resourceType());
     });
     // Any navigation invalidates outstanding refs.
@@ -122,7 +122,7 @@ export class SessionRegistry {
   }
 
   async disposeAll(): Promise<void> {
-    await Promise.all(Array.from(this.sessions.keys()).map(id => this.dispose(id)));
+    await Promise.all(Array.from(this.sessions.keys()).map((id) => this.dispose(id)));
   }
 
   /** Drop sessions that haven't been touched for idleMs (idempotent). */
@@ -132,7 +132,7 @@ export class SessionRegistry {
     for (const [id, entry] of this.sessions) {
       if (now - entry.lastUsed > this.idleMs) stale.push(id);
     }
-    await Promise.all(stale.map(id => this.dispose(id)));
+    await Promise.all(stale.map((id) => this.dispose(id)));
     return stale.length;
   }
 
