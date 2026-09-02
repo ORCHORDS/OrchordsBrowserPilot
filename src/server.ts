@@ -261,7 +261,7 @@ export function buildServer(
     })),
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
     const tool = exposedTools.find((t) => t.name === name);
     if (!tool) {
@@ -269,14 +269,14 @@ export function buildServer(
     }
 
     // Issue #104 — every tool call goes through the session's operation
-    // queue. With `maxConcurrent=1` the gate and the Playwright page
-    // never race: each call sees the live state set up by the call
-    // before it. `run()` returns the dispatch result or throws a queue
-    // error, both of which we translate into a structured tool error so
-    // the caller can tell queue/overflow/cancellation apart from real
-    // handler failures.
+    // queue. The MCP SDK v1 RequestHandlerExtra gives each request an
+    // AbortSignal; passing it into the queue ensures sender cancellation
+    // can remove work that has not started. Once dispatch begins, running
+    // browser/provider work must consume the signal cooperatively (#36).
     try {
-      return await session.ops.run(name, () => dispatchTool(name, tool, args, request));
+      return await session.ops.run(name, () => dispatchTool(name, tool, args, request), {
+        signal: extra.signal,
+      });
     } catch (err) {
       if (err instanceof OperationQueueFullError) {
         return {
@@ -288,6 +288,7 @@ export function buildServer(
                 error: "queue_full",
                 reason: err.message,
                 queueMax: err.queueMax,
+                opId: err.opId,
                 tool: err.tool,
               }),
             },
@@ -302,8 +303,9 @@ export function buildServer(
               type: "text",
               text: JSON.stringify({
                 ok: false,
-                error: "cancelled",
+                error: err.code,
                 reason: err.reason,
+                opId: err.opId,
                 tool: err.tool,
               }),
             },
@@ -531,12 +533,19 @@ function operationEventToAuditKind(kind: OperationEvent["kind"]): AuditKind {
 function operationEventContext(ev: OperationEvent): Record<string, unknown> {
   const ctx: Record<string, unknown> = { opId: ev.opId };
   if (ev.kind === "queued") ctx.queueDepth = ev.queueDepth;
-  if (ev.kind === "started") ctx.inFlight = ev.inFlight;
+  if (ev.kind === "started") {
+    ctx.inFlight = ev.inFlight;
+    ctx.queueWaitMs = ev.queueWaitMs;
+    ctx.dispatchSequence = ev.dispatchSequence;
+  }
   if (ev.kind === "completed") {
     ctx.ok = ev.ok;
     ctx.ms = ev.ms;
   }
-  if (ev.kind === "cancelled") ctx.reason = ev.reason;
+  if (ev.kind === "cancelled") {
+    ctx.reason = ev.reason;
+    ctx.code = ev.code;
+  }
   if (ev.kind === "overflow") ctx.queueMax = ev.queueMax;
   return ctx;
 }
