@@ -3,10 +3,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import express from "express";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 import type { Config } from "./config.js";
 import { createBrowserManager, type BrowserManager } from "./browser.js";
 import { allTools, installBuffers, type ToolContext } from "./tools.js";
+
+export { toolInputSchema };
 
 export async function startStdio(config: Config): Promise<void> {
   const manager = createBrowserManager(config.browser.wsEndpoint, config.browser.headless);
@@ -62,7 +65,7 @@ function buildServer(manager: BrowserManager, extraCtx: Partial<ToolContext & { 
     tools: allTools.map(t => ({
       name: t.name,
       description: t.description,
-      inputSchema: zodToJsonSchema(t.schema),
+      inputSchema: toolInputSchema(t.schema),
     })),
   }));
 
@@ -88,32 +91,12 @@ function buildServer(manager: BrowserManager, extraCtx: Partial<ToolContext & { 
   return server;
 }
 
-function zodToJsonSchema(schema: unknown): unknown {
-  // Minimal passthrough — the MCP SDK accepts Zod schemas as JSON Schema roughly OK
-  // for simple objects. For a polished public release, swap in zod-to-json-schema.
-  const s = schema as { _def?: { typeName?: string; schema?: { _def?: { typeName?: string; shape?: () => Record<string, unknown> } } } };
-  if (s?._def?.typeName === "ZodObject" && s._def.schema?._def?.shape) {
-    const shape = s._def.schema._def.shape();
-    const properties: Record<string, unknown> = {};
-    const required: string[] = [];
-    for (const [k, v] of Object.entries(shape)) {
-      const def = (v as { _def?: { typeName?: string; description?: string } })._def;
-      properties[k] = { type: jsonType(def?.typeName) };
-      if (def?.description) (properties[k] as Record<string, unknown>).description = def.description;
-      required.push(k);
-    }
-    return { type: "object", properties, required };
-  }
-  return { type: "object", additionalProperties: true };
-}
-
-function jsonType(typeName?: string): string {
-  switch (typeName) {
-    case "ZodString": return "string";
-    case "ZodNumber": return "number";
-    case "ZodBoolean": return "boolean";
-    case "ZodArray": return "array";
-    case "ZodEnum": return "string";
-    default: return "string";
-  }
+function toolInputSchema(schema: import("zod").ZodTypeAny): Record<string, unknown> {
+  // Convert Zod to JSON Schema (draft-07 dialect — the broadest MCP-client support).
+  // The result already satisfies the MCP SDK's `inputSchema` shape: type "object"
+  // plus optional properties/required plus extras like enum/default/format/minimum
+  // for primitives. We drop the auto-injected $schema so it doesn't clutter the wire.
+  const json = zodToJsonSchema(schema, { target: "jsonSchema7" }) as Record<string, unknown>;
+  delete json.$schema;
+  return json;
 }
