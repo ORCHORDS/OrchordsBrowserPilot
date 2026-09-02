@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   sync:
-    if: github.event.head_commit.message == 'ci: sync Playwright lockfile'
+    if: "${{ github.event.head_commit.message == 'ci: sync Playwright lockfile' }}"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
