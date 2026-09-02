@@ -140,6 +140,17 @@ Pass the token back into any interaction tool: `browser_click({ "ref": "e3" })`.
 
 > The captcha-solver tool is a hook: it reads `PILOT_CAPTCHA_SOLVER_URL` and `PILOT_CAPTCHA_SOLVER_TOKEN` and forwards the challenge. Wire in your own provider (2Captcha, AntiCaptcha, your own microservice) — the MVP does not ship a default to keep the licensing surface clean.
 
+### HTTP transport security
+
+The HTTP endpoint is hardened by default ([#43](https://github.com/ORCHORDS/orchords-web-pilot/issues/43)):
+
+- **Origin validation** — any request carrying an `Origin` header must match the allowlist (loopback variants by default) or it is rejected with `403`. This blocks malicious websites from driving your local browser via `fetch` against `localhost:8788`, including sandboxed `null` origins.
+- **Host validation** — `Host` must match the bound host or the allowlist, defeating DNS-rebinding attacks.
+- **Public-bind refusal** — binding to a non-loopback address (including `0.0.0.0`) fails at startup unless `PILOT_HTTP_ALLOW_PUBLIC_BIND=true` is set. There is no authentication yet (#42); expose the server only through an authenticating reverse proxy.
+- **Rate limiting** — fixed-window per client IP (default 120/min) with `429` + `Retry-After`.
+- **Body cap + timeouts** — requests above the body cap get `413`; each request has a hard timeout (`504`).
+- **Security headers** — `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `X-Frame-Options: DENY`.
+
 ## Configuration
 
 All config is via environment variables. See [`.env.example`](./.env.example).
@@ -150,6 +161,13 @@ All config is via environment variables. See [`.env.example`](./.env.example).
 | `PILOT_HTTP_HOST`            | `127.0.0.1`   | HTTP transport only.                        |
 | `PILOT_HTTP_PORT`            | `8788`        | HTTP transport only.                        |
 | `PILOT_HTTP_PATH`            | `/mcp`        | HTTP transport only.                        |
+| `PILOT_HTTP_ALLOWED_ORIGINS` | loopback      | Comma-separated Origin allowlist.           |
+| `PILOT_HTTP_ALLOWED_HOSTS`   | bind host     | Comma-separated Host allowlist.             |
+| `PILOT_HTTP_RATE_LIMIT`      | `120`         | Requests/minute per client IP.              |
+| `PILOT_HTTP_MAX_BODY_KB`     | `1024`        | Max JSON body size.                         |
+| `PILOT_HTTP_REQUEST_TIMEOUT_SEC` | `60`      | Hard per-request timeout.                   |
+| `PILOT_HTTP_TRUST_PROXY`     | `false`       | Honor `X-Forwarded-For` (trusted proxies only). |
+| `PILOT_HTTP_ALLOW_PUBLIC_BIND` | `false`     | Required to bind beyond loopback.           |
 | `PILOT_HEADLESS`             | `true`        | Set `false` to watch the agent work.        |
 | `BROWSER_WS_ENDPOINT`        | _(unset)_     | Set to use a remote browser.                |
 | `PILOT_CAPTCHA_SOLVER_URL`   | _(unset)_     | Captcha solver endpoint.                    |

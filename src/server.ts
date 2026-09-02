@@ -7,9 +7,11 @@ import express from "express";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
 import type { Config } from "./config.js";
+import { isLoopbackHost } from "./config.js";
 import { createBrowserManager } from "./browser.js";
 import { allTools, type ToolContext } from "./tools.js";
 import { Session, SessionRegistry } from "./session.js";
+import { buildHardening, defaultAllowedHosts, defaultAllowedOrigins } from "./http-hardening.js";
 
 export { toolInputSchema };
 
@@ -50,8 +52,42 @@ export async function startHttp(config: Config): Promise<void> {
   const solver = { url: config.captcha.url, token: config.captcha.token };
   const registry = new SessionRegistry();
 
+  // Safe-by-default bind check (issue #43): binding a non-loopback address
+  // without PILOT_HTTP_ALLOW_PUBLIC_BIND is almost always a mistake — the
+  // endpoint drives a browser and has no authentication yet (#42).
+  if (!config.http.allowPublicBind && !isLoopbackHost(config.http.host) && config.http.host !== "0.0.0.0") {
+    throw new Error(
+      `Refusing to bind non-loopback host ${config.http.host}. ` +
+        "Set PILOT_HTTP_ALLOW_PUBLIC_BIND=true if this is intentional, and " +
+        "put an authenticating reverse proxy (see issue #42) in front.",
+    );
+  }
+  if (!config.http.allowPublicBind && config.http.host === "0.0.0.0") {
+    throw new Error(
+      "Refusing to bind 0.0.0.0 without authentication. Set PILOT_HTTP_ALLOW_PUBLIC_BIND=true " +
+        "(and front the server with an authenticating proxy) to override.",
+    );
+  }
+
+  const allowedOrigins = config.http.allowedOrigins
+    ? new Set(config.http.allowedOrigins.map(o => o.toLowerCase()))
+    : defaultAllowedOrigins(config.http.host, config.http.port);
+  const allowedHosts = config.http.allowedHosts
+    ? new Set(config.http.allowedHosts.map(h => h.toLowerCase()))
+    : defaultAllowedHosts(config.http.host);
+
+  const { stack } = buildHardening({
+    allowedOrigins,
+    allowedHosts,
+    rateLimitPerMinute: config.http.rateLimitPerMinute,
+    maxBodyBytes: config.http.maxBodyKb * 1024,
+    requestTimeoutMs: config.http.requestTimeoutSec * 1000,
+    trustProxy: config.http.trustProxy,
+  });
+
   const app = express();
-  app.use(express.json({ limit: "10mb" }));
+  app.use(stack);
+  app.use(express.json({ limit: `${config.http.maxBodyKb}kb` }));
 
   app.post(config.http.path, async (req, res) => {
     const incomingId = headerString(req.headers["mcp-session-id"]);
