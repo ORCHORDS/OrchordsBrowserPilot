@@ -118,6 +118,12 @@ export interface SessionDiagnostics {
 
 const CONSOLE_CAP = 1000;
 const NETWORK_CAP = 2000;
+const CONSOLE_LEVEL_ORDER = ["debug", "log", "info", "warn", "error"] as const;
+
+function consoleSeverityRank(level: string): number {
+  const normalized = level === "warning" ? "warn" : level;
+  return CONSOLE_LEVEL_ORDER.indexOf(normalized as (typeof CONSOLE_LEVEL_ORDER)[number]);
+}
 
 export function createDiagnostics(): SessionDiagnostics {
   const consoleBuf: Array<{ level: string; text: string; at: number }> = [];
@@ -136,9 +142,10 @@ export function createDiagnostics(): SessionDiagnostics {
       if (netBuf.length > NETWORK_CAP) netBuf.shift();
     },
     console(level, limit) {
-      const order = ["debug", "log", "info", "warn", "error"];
-      const min = order.indexOf(level);
-      return consoleBuf.filter(m => order.indexOf(m.level) >= min).slice(-limit);
+      const min = consoleSeverityRank(level);
+      return consoleBuf
+        .filter((message) => consoleSeverityRank(message.level) >= min)
+        .slice(-limit);
     },
     network(includeStatic, limit) {
       return netBuf.filter(r => includeStatic || r.type !== "static").slice(-limit);
