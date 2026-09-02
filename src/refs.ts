@@ -1,65 +1,154 @@
-import type { Frame, Locator, Page } from "playwright";
+import { createHash } from "node:crypto";
+import type { ElementHandle, Frame, Page } from "playwright";
 import yaml from "yaml";
+
+type PinnedElement = ElementHandle<SVGElement | HTMLElement>;
 
 /**
  * A single accessibility ref emitted by `Page.ariaSnapshot({ mode: "ai" })`.
  *
- * The YAML uses `[ref=eNN]` (or `[ref=ref/NN]`) after each role. We key the
- * registry by that exact string so the value emitted in `browser_snapshot`
- * output can be passed back into the action tools unchanged.
+ * Production refs are re-keyed with a page/snapshot generation token before
+ * they leave the server. The raw Playwright ref remains internal so a token
+ * from a superseded snapshot can never silently resolve to a newer element.
  */
 export interface RefEntry {
   ref: string;
+  sourceRef: string;
   role: string;
   name: string;
   /** URL of the frame that owns this element, "" for the main frame. */
   frameUrl: string;
   /** Index among elements with the same (role, name) tuple — disambiguates repeats. */
   index: number;
+  pageGeneration: number;
+  snapshotGeneration: number;
+  handle?: PinnedElement;
+  fingerprint?: string;
+}
+
+export interface RefIngestResult {
+  registered: number;
+  snapshot: string;
+  snapshotGeneration: number;
 }
 
 /**
- * Tracks refs from the most recent snapshot for the current session. Cleared
- * automatically when the page navigates (caller's responsibility to call
- * `clear()`) or when a new snapshot supersedes it.
+ * Tracks refs from the most recent snapshot for the current session.
+ *
+ * Two safety properties are intentional here:
+ * 1. every production snapshot emits generation-qualified ref tokens, so a
+ *    token from an older snapshot cannot alias a ref from a newer snapshot;
+ * 2. each ref is pinned to the exact ElementHandle captured from that
+ *    snapshot. Playwright locators deliberately re-resolve against the latest
+ *    DOM; snapshot refs must do the opposite and fail when their DOM node was
+ *    replaced or semantically recycled.
  */
 export class RefRegistry {
   private readonly entries = new Map<string, RefEntry>();
-  private readonly seenKeys = new Map<string, number>();
+  private snapshotGeneration = 0;
 
-  /** Erase all tracked refs (call before each new snapshot). */
+  /** Erase all tracked refs and release their browser-side handles. */
   clear(): void {
+    for (const entry of this.entries.values()) {
+      if (entry.handle) void entry.handle.dispose().catch(() => undefined);
+    }
     this.entries.clear();
-    this.seenKeys.clear();
+  }
+
+  /** Most recent snapshot generation for diagnostics/telemetry. */
+  generation(): number {
+    return this.snapshotGeneration;
   }
 
   /**
    * Parse a Playwright `ariaSnapshot({mode:"ai"})` YAML output and record
    * every node that contains `[ref=...]`.
    *
-   * Returns the list of refs that were registered. Duplicates within the
-   * same snapshot keep their numeric suffix but the registry keeps only the
-   * last occurrence under the bare key — disambiguation uses the `index`
-   * counter when callers resolve `ref=foo` against multiple matches.
+   * When `pageGeneration` is non-zero (the production path), the snapshot
+   * returned to the caller contains opaque generation-qualified tokens such
+   * as `p2s3_r7`. Unit/parser callers that omit a page generation retain the
+   * raw Playwright ref strings so the parser remains testable without a
+   * browser.
    */
-  ingest(snapshotYaml: string, _page: Page): { registered: number } {
+  ingest(snapshotYaml: string, _page?: Page, pageGeneration = 0): RefIngestResult {
     this.clear();
+    const snapshotGeneration = ++this.snapshotGeneration;
     const nodes = parseAiSnapshot(snapshotYaml);
     const frameIndex = new Map<string, number>();
+    const replacements = new Map<string, string>();
+
+    let ordinal = 0;
     for (const node of nodes) {
       const key = node.role + "\u0001" + node.name;
       const nth = frameIndex.get(node.frameUrl + "\u0001" + key) ?? 0;
       frameIndex.set(node.frameUrl + "\u0001" + key, nth + 1);
       node.index = nth;
-      this.entries.set(node.ref, node);
+
+      const sourceRef = node.ref;
+      const externalRef =
+        pageGeneration > 0 ? `p${pageGeneration}s${snapshotGeneration}_r${++ordinal}` : sourceRef;
+      replacements.set(sourceRef, externalRef);
+      this.entries.set(externalRef, {
+        ...node,
+        ref: externalRef,
+        sourceRef,
+        pageGeneration,
+        snapshotGeneration,
+      });
     }
-    return { registered: nodes.length };
+
+    const snapshot =
+      pageGeneration > 0
+        ? snapshotYaml.replace(/\[ref=([^\]]+)\]/g, (full, sourceRef: string) => {
+            const replacement = replacements.get(sourceRef);
+            return replacement ? `[ref=${replacement}]` : full;
+          })
+        : snapshotYaml;
+
+    return { registered: nodes.length, snapshot, snapshotGeneration };
+  }
+
+  /**
+   * Pin every currently registered ref to the exact DOM element that existed
+   * when the snapshot was captured. Binding is all-or-nothing: a snapshot
+   * whose refs cannot be pinned is rejected instead of returning unreliable
+   * tokens.
+   */
+  async bindHandles(page: Page, expectedSnapshotGeneration = this.snapshotGeneration): Promise<void> {
+    if (expectedSnapshotGeneration !== this.snapshotGeneration) {
+      throw new Error("Snapshot generation changed before refs could be bound");
+    }
+
+    const entries = Array.from(this.entries.values());
+    try {
+      for (const entry of entries) {
+        if (entry.snapshotGeneration !== expectedSnapshotGeneration) continue;
+        const frame = frameForUrl(page, entry.frameUrl) ?? page.mainFrame();
+        const locator = frame.getByRole(entry.role as never, { name: entry.name, exact: false });
+        const scoped = entry.index > 0 ? locator.nth(entry.index) : locator;
+        const handle = await scoped.elementHandle();
+        const fingerprint = await fingerprintElement(handle);
+
+        if (
+          expectedSnapshotGeneration !== this.snapshotGeneration ||
+          this.entries.get(entry.ref) !== entry
+        ) {
+          await handle.dispose().catch(() => undefined);
+          throw new Error("Snapshot generation changed while refs were being bound");
+        }
+
+        entry.handle = handle;
+        entry.fingerprint = fingerprint;
+      }
+    } catch (err) {
+      this.clear();
+      throw err;
+    }
   }
 
   /**
    * Look up a ref by its emitted key. Returns null when the ref has never
-   * been registered for this session — the caller should raise a structured
-   * stale-ref error.
+   * been registered for the current snapshot.
    */
   get(ref: string): RefEntry | null {
     return this.entries.get(ref) ?? null;
@@ -73,63 +162,146 @@ export class RefRegistry {
 
 /** Custom error so callers can distinguish a stale ref from other failures. */
 export class StaleRefError extends Error {
-  constructor(public readonly ref: string) {
-    super(`Ref '${ref}' is no longer valid. Take a new browser_snapshot and try again.`);
+  constructor(public readonly ref: string, detail = "is no longer valid") {
+    super(`Ref '${ref}' ${detail}. Take a new browser_snapshot and try again.`);
     this.name = "StaleRefError";
   }
 }
 
 /**
- * Resolve a registered ref to a Playwright Locator scoped to the frame that
- * owns the element. Throws StaleRefError if the ref is unknown.
+ * Snapshot-bound action target. Unlike a Locator, this object never
+ * re-resolves to a replacement DOM node. Every action revalidates the pinned
+ * element's connectivity and semantic fingerprint immediately before use;
+ * ElementHandle actions then fail if the node detaches during the action.
  */
-export function resolveRef(page: Page, registry: RefRegistry, ref: string): Locator {
+export class ResolvedRef {
+  constructor(
+    private readonly page: Page,
+    private readonly entry: RefEntry,
+  ) {}
+
+  async click(): Promise<void> {
+    await (await this.currentHandle()).click();
+  }
+
+  async fill(value: string): Promise<void> {
+    await (await this.currentHandle()).fill(value);
+  }
+
+  async hover(): Promise<void> {
+    await (await this.currentHandle()).hover();
+  }
+
+  async selectOption(value: string | { label: string }): Promise<string[]> {
+    return (await this.currentHandle()).selectOption(value);
+  }
+
+  async dragTo(target: ResolvedRef): Promise<void> {
+    const sourceHandle = await this.currentHandle();
+    const targetHandle = await target.currentHandle();
+    await sourceHandle.hover();
+    await this.page.mouse.down();
+    try {
+      await targetHandle.hover();
+      // Playwright documents that some dragover implementations require a
+      // second move to the drop target in order to dispatch dragover.
+      await targetHandle.hover();
+    } finally {
+      await this.page.mouse.up();
+    }
+  }
+
+  private async currentHandle(): Promise<PinnedElement> {
+    const { handle, fingerprint } = this.entry;
+    if (!handle || !fingerprint) {
+      throw new StaleRefError(this.entry.ref, "was not bound to the captured DOM element");
+    }
+
+    try {
+      const connected = await handle.evaluate((element) => element.isConnected);
+      if (!connected) {
+        throw new StaleRefError(this.entry.ref, "was detached from the DOM after its snapshot");
+      }
+      const currentFingerprint = await fingerprintElement(handle);
+      if (currentFingerprint !== fingerprint) {
+        throw new StaleRefError(
+          this.entry.ref,
+          "no longer matches the element captured by its snapshot",
+        );
+      }
+      return handle;
+    } catch (err) {
+      if (err instanceof StaleRefError) throw err;
+      throw new StaleRefError(this.entry.ref, "became stale after its snapshot");
+    }
+  }
+}
+
+/**
+ * Resolve a registered ref to its snapshot-bound action target. Unknown or
+ * superseded generation tokens fail immediately instead of being guessed.
+ */
+export function resolveRef(page: Page, registry: RefRegistry, ref: string): ResolvedRef {
   const entry = registry.get(ref);
   if (!entry) throw new StaleRefError(ref);
-  const frame = frameForUrl(page, entry.frameUrl) ?? page.mainFrame();
-  const loc = frame.getByRole(entry.role as never, { name: entry.name, exact: false });
-  return entry.index > 0 ? loc.nth(entry.index) : loc;
+  return new ResolvedRef(page, entry);
 }
 
 function frameForUrl(page: Page, url: string): Frame | null {
   if (!url) return null;
-  for (const f of page.frames()) {
-    if (f.url() === url) return f;
+  for (const frame of page.frames()) {
+    if (frame.url() === url) return frame;
   }
   return null;
 }
 
 /**
+ * Hash a small semantic fingerprint instead of persisting/logging page text.
+ * This catches virtualized/recycled DOM nodes that remain connected while
+ * changing meaning between snapshot and action.
+ */
+async function fingerprintElement(handle: PinnedElement): Promise<string> {
+  const fields = await handle.evaluate((element) => {
+    const compact = (value: string | null | undefined) =>
+      (value ?? "").replace(/\s+/g, " ").trim();
+    const labelledBy = compact(element.getAttribute("aria-labelledby"))
+      .split(" ")
+      .filter(Boolean)
+      .map((id) => compact(element.ownerDocument.getElementById(id)?.textContent))
+      .join(" ");
+    const labels =
+      "labels" in element && (element as HTMLInputElement).labels
+        ? Array.from((element as HTMLInputElement).labels ?? [], (label) => compact(label.textContent)).join(" ")
+        : "";
+    const renderedText =
+      "innerText" in element
+        ? compact((element as HTMLElement).innerText)
+        : compact(element.textContent);
+
+    return {
+      tag: element.tagName,
+      role: compact(element.getAttribute("role")),
+      ariaLabel: compact(element.getAttribute("aria-label")),
+      labelledBy: compact(labelledBy),
+      labels: compact(labels),
+      name: compact(element.getAttribute("name")),
+      type: compact(element.getAttribute("type")),
+      title: compact(element.getAttribute("title")),
+      placeholder: compact(element.getAttribute("placeholder")),
+      alt: compact(element.getAttribute("alt")),
+      text: renderedText,
+    };
+  });
+  return createHash("sha256").update(JSON.stringify(fields)).digest("hex");
+}
+
+/**
  * Walk the `ariaSnapshot({mode:"ai"})` YAML and pull out every node that has
- * a `[ref=...]` marker. Playwright uses two shapes:
- *
- *   - generic: `- text "Save" [ref=e23]`
- *   - nested under `iframes:`:
- *       iframes:
- *         - ref=iframe1
- *           content: |
- *             - text "OK" [ref=e24]
- *
- * We only need (role, name, ref, frameUrl) — selectors are reconstructed at
- * resolve time via `getByRole`, which already handles the role+name tuple.
+ * a `[ref=...]` marker.
  */
 function parseAiSnapshot(yamlText: string): Array<RefEntry & { index: number }> {
   const out: Array<RefEntry & { index: number }> = [];
   if (!yamlText.trim()) return out;
-
-  // The AI-mode snapshot is a YAML document whose root is either an array
-  // of nodes (typical) or a map keyed by ref (some modes). We walk every
-  // string scalar in the tree and pull out the `[ref=eN]` token plus the
-  // role and accessible name that precede it. Two real shapes:
-  //
-  //   - generic [ref=e1]:
-  //       - heading "Settings" [level=1] [ref=e2]
-  //       - listitem [ref=e6]: Item
-  //       - button "Save" [ref=e3]
-  //
-  // The third shape is `<role> "<name>"` and the fourth is `<role>: <text>`
-  // (the latter only used when no accessible name is available — we treat
-  // the inline text as the name so getByRole() can still resolve it).
   const doc = yaml.parse(yamlText) as unknown;
   walk(doc, "", out);
   return out;
@@ -146,18 +318,12 @@ function walk(node: unknown, frameUrl: string, out: Array<RefEntry & { index: nu
     return;
   }
   const obj = node as Record<string, unknown>;
-  // iframes are scoped to their own frame — recurse with the iframe's own
-  // ref as the frameUrl so nested refs resolve to the iframe frame later.
   if (Array.isArray(obj.iframes)) {
-    for (const f of obj.iframes) walk(f, frameUrl, out);
+    for (const frame of obj.iframes) walk(frame, frameUrl, out);
   }
   for (const [key, value] of Object.entries(obj)) {
     if (key === "iframes") continue;
     if (typeof value === "string") {
-      // When yaml parses `- listitem [ref=e6]: Item`, the key carries the
-      // ref + role but no name; the name lives in the value scalar. Pass
-      // the value in as a "name hint" so extractRefFromScalar can fold it
-      // in when the key has no quoted name.
       extractRefFromScalar(key, frameUrl, out, value);
       extractRefFromScalar(value, frameUrl, out);
     } else {
@@ -174,20 +340,23 @@ function extractRefFromScalar(
 ): void {
   const refMatch = scalar.match(/\[ref=([^\]]+)\]/);
   if (!refMatch) return;
-  // Strip trailing attribute lists (`[level=1]`, `[active]`, …) and the
-  // `[ref=...]` token itself; the remainder is the role + optional
-  // `"name"` (or trailing `: text`).
   const beforeRef = scalar.slice(0, refMatch.index).trim();
   const head = beforeRef.replace(/\[[^\]]*\]\s*$/, "").trim();
   const roleName = head.match(/^([\w-]+)\s*(?:"([^"]*)"|'([^']*)')?\s*(?::\s*(.*))?$/);
   if (!roleName) return;
   const role = roleName[1]!;
   let name = roleName[2] ?? roleName[3] ?? (roleName[4] ?? "").trim();
-  // Key shape `- listitem [ref=e6]: Item` collapses to key="- listitem [ref=e6]"
-  // and value="Item" — the colon-text part of the regex above captures an
-  // empty string because the colon is AFTER the ref. Use the hint instead.
   if (!name && nameHint && !nameHint.includes("[ref=")) {
     name = nameHint.trim();
   }
-  out.push({ ref: refMatch[1]!, role, name, frameUrl, index: 0 });
+  out.push({
+    ref: refMatch[1]!,
+    sourceRef: refMatch[1]!,
+    role,
+    name,
+    frameUrl,
+    index: 0,
+    pageGeneration: 0,
+    snapshotGeneration: 0,
+  });
 }

@@ -38,14 +38,30 @@ export const navigate: ToolDef = {
 export const snapshot: ToolDef = {
   name: "browser_snapshot",
   description:
-    "Return the AI-oriented accessibility snapshot for the current page. Each node carries a `ref` token (e.g. `[ref=e23]`) that can be passed back into browser_click/browser_type/etc. Refs are invalidated on navigation.",
+    "Return the AI-oriented accessibility snapshot for the current page. Each node carries a generation-bound `ref` token (e.g. `[ref=p2s3_r7]`) that can be passed back into browser_click/browser_type/etc. Refs are invalidated by navigation, rerendered/recycled target nodes, or a newer snapshot.",
   schema: z.object({}).passthrough(),
   handler: async (_args, ctx) => {
     const p = await page(ctx);
+    const pageGeneration = ctx.session.pageGeneration();
     const yamlText = await p.ariaSnapshot({ mode: "ai" });
-    const { registered } = ctx.session.refs.ingest(yamlText, p);
+    if (ctx.session.pageGeneration() !== pageGeneration) {
+      throw new Error("Page changed while browser_snapshot was being captured. Take a fresh snapshot.");
+    }
+
+    const result = ctx.session.refs.ingest(yamlText, p, pageGeneration);
+    await ctx.session.refs.bindHandles(p, result.snapshotGeneration);
+    if (ctx.session.pageGeneration() !== pageGeneration) {
+      ctx.session.clearRefs();
+      throw new Error("Page changed while browser_snapshot refs were being bound. Take a fresh snapshot.");
+    }
+
     ctx.session.noteSnapshotTaken();
-    return { snapshot: yamlText, refs: registered };
+    return {
+      snapshot: result.snapshot,
+      refs: result.registered,
+      pageGeneration,
+      snapshotGeneration: result.snapshotGeneration,
+    };
   },
 };
 
@@ -211,10 +227,10 @@ export const select: ToolDef = {
       label?: string;
     };
     const p = await page(ctx);
-    const target = ref ? resolveRef(p, ctx.session.refs, ref) : p.locator(selector!);
-    if (value) await target.selectOption(value);
-    else if (label) await target.selectOption({ label });
-    else throw new Error("Provide value or label");
+    const option = value ? value : label ? { label } : null;
+    if (!option) throw new Error("Provide value or label");
+    if (ref) await resolveRef(p, ctx.session.refs, ref).selectOption(option);
+    else await p.locator(selector!).selectOption(option);
     return { ok: true };
   },
 };
