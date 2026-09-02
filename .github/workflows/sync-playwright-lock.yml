@@ -35,3 +35,5 @@ jobs:
           git add package-lock.json
           git commit -m 'chore: sync Playwright lockfile for 1.59.1 floor (#105)'
           git push origin HEAD:main
+
+# One-shot helper: remove after the generated lockfile commit lands.
