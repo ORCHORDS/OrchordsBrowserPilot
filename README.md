@@ -56,6 +56,15 @@ npm run build
 npm start
 ```
 
+## Compatibility
+
+- **Node.js:** `>=20.10`.
+- **Playwright:** `>=1.59.1 <2.0.0`. Web Pilot uses the AI-mode accessibility snapshot APIs introduced in the Playwright 1.59 line; startup fails with an actionable error if package-manager overrides force an older or unsupported major version.
+- **Browser binaries:** Playwright browser revisions are coupled to the installed Playwright package. After changing Playwright versions, install the matching browser with `npx playwright install chromium` (or `npx playwright install --with-deps chromium` on a fresh Linux runner).
+- **Verification policy:** every `main` push exercises the declared minimum Playwright 1.59.1 with a real browser and also installs the packed npm artifact into a clean fixture. The scheduled Daily Build deliberately overrides the lockfile with the current stable `playwright@latest` to detect upstream compatibility drift before the supported range is changed.
+
+Web Pilot does not claim support for arbitrary older Playwright installations just because npm can be forced to resolve them. The declared dependency range, runtime guard, package smoke test, and CI compatibility lanes are the support contract.
+
 ## Usage
 
 ### stdio (default — desktop agents)
