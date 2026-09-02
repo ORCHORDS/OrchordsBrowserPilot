@@ -21,6 +21,7 @@
     "lint": "eslint \"src/**/*.ts\"",
     "format": "prettier --check \"src/**/*.ts\"",
     "test": "node --test --import tsx \"test/**/*.test.ts\"",
+    "extension:check": "node --test --import tsx test/extension-manifest.test.ts",
     "audit": "npm audit --omit=dev --audit-level=high"
   },
   "engines": {
