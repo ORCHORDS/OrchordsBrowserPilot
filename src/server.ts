@@ -20,10 +20,16 @@ import {
   digestEnvelope,
   noopSink,
   summarizeEnvelope,
+  type AuditKind,
   type LiveStateSnapshot,
   type ProposedActionEnvelope,
   policyTools,
 } from "./policy/index.js";
+import {
+  OperationCancelledError,
+  OperationQueueFullError,
+  type OperationEvent,
+} from "./operation-queue.js";
 
 export { toolInputSchema };
 
@@ -35,7 +41,10 @@ export { toolInputSchema };
 export async function startStdio(config: Config): Promise<void> {
   const manager = createBrowserManager(config.browser.wsEndpoint, config.browser.headless);
   const solver = { url: config.captcha.url, token: config.captcha.token };
-  const session = new Session("stdio", manager);
+  const session = new Session("stdio", manager, {
+    maxConcurrent: config.operations.maxConcurrent,
+    queueMax: config.operations.queueMax,
+  });
   const transport = new StdioServerTransport();
   const server = buildServer(session, solver, { policyMode: config.policy.mode });
   await server.connect(transport);
@@ -106,7 +115,10 @@ export async function startHttp(config: Config): Promise<void> {
     const sessionId = incomingId ?? randomUUID();
     const session = registry.getOrCreate(sessionId, (id) => {
       const manager = createBrowserManager(config.browser.wsEndpoint, config.browser.headless);
-      return new Session(id, manager);
+      return new Session(id, manager, {
+        maxConcurrent: config.operations.maxConcurrent,
+        queueMax: config.operations.queueMax,
+      });
     });
 
     const transport = new StreamableHTTPServerTransport({
@@ -131,7 +143,28 @@ export async function startHttp(config: Config): Promise<void> {
   });
 
   app.get(`${config.http.path}/health`, (_req, res) => {
-    res.json({ ok: true, name: "orchords-web-pilot", transport: "http", sessions: registry.size() });
+    // Sum per-session queue stats so the health endpoint exposes both
+    // session count and live backpressure (issue #104).
+    let inFlight = 0;
+    let queued = 0;
+    let overflowed = 0;
+    let cancelled = 0;
+    let completed = 0;
+    for (const session of registry.all()) {
+      const s = session.ops.stats();
+      inFlight += s.inFlight;
+      queued += s.queued;
+      overflowed += s.overflowed;
+      cancelled += s.cancelled;
+      completed += s.completed;
+    }
+    res.json({
+      ok: true,
+      name: "orchords-web-pilot",
+      transport: "http",
+      sessions: registry.size(),
+      queue: { inFlight, queued, overflowed, cancelled, completed },
+    });
   });
 
   // Periodically sweep idle sessions — at most once a minute.
@@ -160,7 +193,7 @@ function headerString(v: string | string[] | undefined): string | undefined {
   return v && v.length > 0 ? v : undefined;
 }
 
-function buildServer(
+export function buildServer(
   session: Session,
   solver: { url?: string; token?: string },
   options: { policyMode?: "audit" | "enforce" } = {},
@@ -185,6 +218,21 @@ function buildServer(
   const approvals = new ApprovalStore();
   const gate = new ActionGate(approvals, composeSinks([noopSink, audit.asSink()]));
   const proposals = new Map<string, ProposedActionEnvelope>();
+
+  // Issue #104 — wire the per-session operation queue's lifecycle into
+  // the audit log so overflow, cancellation, and queueing transitions
+  // are visible in the same stream as the policy events. The onEvent
+  // hook is set at Session construction time so we re-bind here to the
+  // local audit sink (each buildServer() owns its own MemoryAuditSink).
+  session.ops.onEvent = (ev: OperationEvent) => {
+    audit.emit({
+      kind: operationEventToAuditKind(ev.kind),
+      ts: Date.now(),
+      sessionId: ev.sessionId,
+      tool: ev.tool,
+      context: operationEventContext(ev),
+    });
+  };
 
   /** Resolve the live page URL / frame URL / origin for the gate. */
   const liveState = (_tool: string, _args: Record<string, unknown>): LiveStateSnapshot => {
@@ -220,6 +268,62 @@ function buildServer(
       return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
     }
 
+    // Issue #104 — every tool call goes through the session's operation
+    // queue. With `maxConcurrent=1` the gate and the Playwright page
+    // never race: each call sees the live state set up by the call
+    // before it. `run()` returns the dispatch result or throws a queue
+    // error, both of which we translate into a structured tool error so
+    // the caller can tell queue/overflow/cancellation apart from real
+    // handler failures.
+    try {
+      return await session.ops.run(name, () => dispatchTool(name, tool, args, request));
+    } catch (err) {
+      if (err instanceof OperationQueueFullError) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                ok: false,
+                error: "queue_full",
+                reason: err.message,
+                queueMax: err.queueMax,
+                tool: err.tool,
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+      if (err instanceof OperationCancelledError) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                ok: false,
+                error: "cancelled",
+                reason: err.reason,
+                tool: err.tool,
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+      throw err;
+    }
+  });
+
+  // The actual gate+handler body lives in its own function so the queue
+  // wrap above stays trivial — `dispatchTool` either resolves with a
+  // CallToolResult or throws a structured Error.
+  async function dispatchTool(
+    name: string,
+    tool: { schema: import("zod").ZodTypeAny; handler: (parsed: unknown, ctx: ToolContext) => Promise<unknown> },
+    args: unknown,
+    _request: unknown,
+  ): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
     // Policy tools (propose / approve) carry the gate as part of their
     // tool context so they can record proposals / mint approval rows.
     if (policyToolsByName.has(name)) {
@@ -336,7 +440,7 @@ function buildServer(
       gate.recordDispatch({ sessionId: session.id, tool: name }, { ok: false, reason: message });
       return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
     }
-  });
+  }
 
   return server;
 }
@@ -405,4 +509,34 @@ function toolInputSchema(schema: import("zod").ZodTypeAny): Record<string, unkno
   const json = zodToJsonSchema(schema, { target: "jsonSchema7" }) as Record<string, unknown>;
   delete json.$schema;
   return json;
+}
+
+/** Map OperationEvent.kind → AuditKind so the audit log gets a unified view. */
+function operationEventToAuditKind(kind: OperationEvent["kind"]): AuditKind {
+  switch (kind) {
+    case "queued":
+      return "dispatch.queued";
+    case "started":
+      return "dispatch.started";
+    case "completed":
+      return "dispatch.completed";
+    case "cancelled":
+      return "dispatch.cancelled";
+    case "overflow":
+      return "dispatch.overflowed";
+  }
+}
+
+/** Pull the OperationEvent fields that aren't on AuditEvent into `context`. */
+function operationEventContext(ev: OperationEvent): Record<string, unknown> {
+  const ctx: Record<string, unknown> = { opId: ev.opId };
+  if (ev.kind === "queued") ctx.queueDepth = ev.queueDepth;
+  if (ev.kind === "started") ctx.inFlight = ev.inFlight;
+  if (ev.kind === "completed") {
+    ctx.ok = ev.ok;
+    ctx.ms = ev.ms;
+  }
+  if (ev.kind === "cancelled") ctx.reason = ev.reason;
+  if (ev.kind === "overflow") ctx.queueMax = ev.queueMax;
+  return ctx;
 }

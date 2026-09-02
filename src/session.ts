@@ -2,6 +2,7 @@ import type { Page } from "playwright";
 import type { BrowserManager, SessionDiagnostics } from "./browser.js";
 import { createDiagnostics } from "./browser.js";
 import { RefRegistry } from "./refs.js";
+import { OperationQueue, type OperationQueueOptions } from "./operation-queue.js";
 
 /**
  * A logical MCP session: a single browser manager plus its page, the ref
@@ -18,14 +19,25 @@ export class Session {
   readonly manager: BrowserManager;
   readonly refs = new RefRegistry();
   readonly diagnostics: SessionDiagnostics;
+  /**
+   * Per-session operation queue (issue #104). One slot by default so the
+   * gate and Playwright never race on the same page; see
+   * `OperationQueue` for the overflow/abort/telemetry contract.
+   */
+  readonly ops: OperationQueue;
   private currentPage: Page | null = null;
   private lastSnapshotAt = 0;
   private pageListenersInstalled = false;
 
-  constructor(id: string, manager: BrowserManager) {
+  constructor(
+    id: string,
+    manager: BrowserManager,
+    queueOptions: OperationQueueOptions = {},
+  ) {
     this.id = id;
     this.manager = manager;
     this.diagnostics = createDiagnostics();
+    this.ops = new OperationQueue(id, queueOptions);
   }
 
   /**
@@ -64,8 +76,13 @@ export class Session {
    * Tear down session-owned resources: the page (if we opened it) and its
    * listeners. Does NOT close the manager — that's a transport-level
    * decision (see server.ts).
+   *
+   * The operation queue is disposed first so any queued calls unblock
+   * with an `OperationCancelledError` before their owning request goes
+   * away.
    */
   async dispose(): Promise<void> {
+    this.ops.dispose();
     if (this.currentPage && !this.currentPage.isClosed()) {
       await this.currentPage.close().catch(() => undefined);
     }
@@ -139,5 +156,14 @@ export class SessionRegistry {
   /** Number of live sessions — exposed for tests and diagnostics. */
   size(): number {
     return this.sessions.size;
+  }
+
+  /**
+   * Iterate live sessions. Order is undefined. Callers that need to read
+   * stats across all sessions (e.g. `/health`, metrics scrapers) should
+   * snapshot — mutating the registry while iterating is unsupported.
+   */
+  all(): Session[] {
+    return Array.from(this.sessions.values(), (e) => e.session);
   }
 }

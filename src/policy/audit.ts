@@ -15,6 +15,10 @@ export type AuditKind =
   | "approval.rejected"
   | "dispatch.completed"
   | "dispatch.failed"
+  | "dispatch.queued"
+  | "dispatch.started"
+  | "dispatch.cancelled"
+  | "dispatch.overflowed"
   | "policy.elevated_scope_required"
   | "policy.workflow_grant_required";
 

@@ -65,6 +65,24 @@ const Config = z.object({
       mode: z.enum(["audit", "enforce"]).default("audit"),
     })
     .default({}),
+  operations: z
+    .object({
+      /**
+       * Issue #104 — per-session operation queue.
+       *
+       * `maxConcurrent` slots run at once per session; further callers
+       * queue in FIFO order. Default 1 keeps the gate and the Playwright
+       * page lockstep so the live snapshot taken for the TOCTOU check
+       * matches the page state the handler actually navigates.
+       *
+       * `queueMax` caps the backlog; overflow returns immediately with a
+       * structured 503-shaped error so the caller can back off instead of
+       * deadlocking. Default 64.
+       */
+      maxConcurrent: z.coerce.number().int().positive().default(1),
+      queueMax: z.coerce.number().int().nonnegative().default(64),
+    })
+    .default({}),
 });
 
 export type Config = z.infer<typeof Config>;
@@ -100,6 +118,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     policy: {
       mode: env.PILOT_POLICY_MODE,
+    },
+    operations: {
+      maxConcurrent: env.PILOT_OPS_MAX_CONCURRENT,
+      queueMax: env.PILOT_OPS_QUEUE_MAX,
     },
   });
 }
