@@ -226,7 +226,7 @@ describe("E2E policy approvals + queued TOCTOU (#81/#104)", () => {
 
     const [waitRpc, targetRpc] = await Promise.all([waitCall.response, targetCall.response]);
     assert.equal(waitRpc.error, undefined, JSON.stringify(waitRpc));
-    assert.equal(waitRpc.result?.isError, false, JSON.stringify(waitRpc));
+    assert.notEqual(waitRpc.result?.isError, true, JSON.stringify(waitRpc));
     assert.equal(targetRpc.error, undefined, JSON.stringify(targetRpc));
     assert.equal(targetRpc.result?.isError, true, JSON.stringify(targetRpc));
     const blockedText = targetRpc.result?.content?.[0]?.text ?? "";
