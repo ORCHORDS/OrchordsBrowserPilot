@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 
@@ -17,12 +20,21 @@ test("native host rejects an unapproved browser caller before processing stdin (
   const output = new PassThrough();
   const errors = new PassThrough();
   await assert.rejects(
-    runNativeHost({ callerOrigin: "https://evil.example", allowedOrigins: [origin], input, output, errors }),
+    runNativeHost({
+      callerOrigin: "https://evil.example",
+      allowedOrigins: [origin],
+      profileId: "profile-a",
+      pairingFile: "/unused/pairings.json",
+      input,
+      output,
+      errors,
+    }),
     /caller origin is not allowed/,
   );
 });
 
-test("native host answers only the bridge handshake over framed stdout (#123)", async () => {
+test("native host first handshake returns one-time pairing credential over framed stdout (#123)", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "native-host-"));
   const input = new PassThrough();
   const output = new PassThrough();
   const errors = new PassThrough();
@@ -32,12 +44,16 @@ test("native host answers only the bridge handshake over framed stdout (#123)", 
   const running = runNativeHost({
     callerOrigin: origin,
     allowedOrigins: [origin],
+    profileId: "profile-a",
+    pairingFile: path.join(dir, "pairings.json"),
     input,
     output,
     errors,
     now: () => 1000,
     randomUUID: () => "11111111-1111-4111-8111-111111111111",
     randomNonce: () => "a".repeat(64),
+    randomPairingUUID: () => "pair-1",
+    randomPairingBytes: (size: number) => Buffer.alloc(size, 7),
   });
   input.end(
     encodeNativeMessage({
@@ -46,20 +62,21 @@ test("native host answers only the bridge handshake over framed stdout (#123)", 
       nonce: "b".repeat(64),
       deadlineAt: 2000,
       type: "bridge.hello",
-      payload: { extensionId: "abc" },
+      payload: { installId: "install-aaaaaaaa" },
     }),
   );
   await running;
 
-  const decoder = new NativeMessageDecoder();
-  assert.deepEqual(decoder.push(Buffer.concat(chunks)), [
-    {
-      protocol: 1,
-      id: "11111111-1111-4111-8111-111111111111",
-      nonce: "a".repeat(64),
-      deadlineAt: 31_000,
-      type: "bridge.ready",
-      payload: { callerOrigin: origin },
-    },
-  ]);
+  const decoded = new NativeMessageDecoder().push(Buffer.concat(chunks));
+  assert.equal(decoded.length, 1);
+  const message = decoded[0] as {
+    type: string;
+    payload: { callerOrigin: string; installId: string; pairingId: string; generation: number; secret?: string };
+  };
+  assert.equal(message.type, "bridge.paired");
+  assert.equal(message.payload.callerOrigin, origin);
+  assert.equal(message.payload.installId, "install-aaaaaaaa");
+  assert.equal(message.payload.pairingId, "pair-1");
+  assert.equal(message.payload.generation, 1);
+  assert.match(message.payload.secret ?? "", /^[A-Za-z0-9_-]{43}$/);
 });
