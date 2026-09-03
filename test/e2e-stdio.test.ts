@@ -114,6 +114,66 @@ describe("E2E stdio (P0 #1 state persistence + #2 ref resolution)", () => {
     }
   });
 
+  it("rejects malformed target-bearing calls through real MCP dispatch before handlers run (#4)", async () => {
+    const invalidCalls: Array<{ name: string; args: unknown; label: string }> = [
+      { name: "browser_click", args: {}, label: "click missing target" },
+      {
+        name: "browser_click",
+        args: { ref: "p1s1_r1", selector: "#go" },
+        label: "click conflicting targets",
+      },
+      { name: "browser_click", args: { x: 10 }, label: "click partial coordinates" },
+      {
+        name: "browser_type",
+        args: { text: "hello", ref: "p1s1_r1", selector: "#name" },
+        label: "type conflicting explicit targets",
+      },
+      { name: "browser_fill", args: { value: "Ada" }, label: "fill missing target" },
+      {
+        name: "browser_fill",
+        args: { ref: "p1s1_r1", selector: "#name", value: "Ada" },
+        label: "fill conflicting targets",
+      },
+      { name: "browser_hover", args: {}, label: "hover missing target" },
+      {
+        name: "browser_hover",
+        args: { ref: "p1s1_r1", selector: "#menu" },
+        label: "hover conflicting targets",
+      },
+      {
+        name: "browser_drag",
+        args: { fromRef: "p1s1_r1", fromSelector: "#drag", toSelector: "#drop" },
+        label: "drag conflicting source targets",
+      },
+      {
+        name: "browser_drag",
+        args: { fromSelector: "#drag", toRef: "p1s1_r2", toSelector: "#drop" },
+        label: "drag conflicting destination targets",
+      },
+      {
+        name: "browser_drag",
+        args: { fromSelector: "#drag" },
+        label: "drag missing destination",
+      },
+      {
+        name: "browser_select",
+        args: { selector: "#country" },
+        label: "select missing option",
+      },
+      {
+        name: "browser_select",
+        args: { selector: "#country", value: "my", label: "Malaysia" },
+        label: "select conflicting option modes",
+      },
+    ];
+
+    for (const invalid of invalidCalls) {
+      const result = await client.callTool(invalid.name, invalid.args);
+      assert.equal(result.isError, true, `${invalid.label} should be rejected by service dispatch`);
+      assert.match(result.text, /^Error:/, `${invalid.label} should return a structured validation error`);
+    }
+  });
+
   it("navigate -> snapshot -> click-via-ref -> evaluate on the same page (#1, #2)", async () => {
     // A data: URL keeps the test hermetic — no network access needed.
     const nav = await client.callTool("browser_navigate", {
