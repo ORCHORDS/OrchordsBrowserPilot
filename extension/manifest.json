@@ -4,7 +4,7 @@
   "short_name": "Web Pilot",
   "version": "0.1.0",
   "description": "Connect your Chrome or Edge browser to Orchords Web Pilot.",
-  "permissions": ["activeTab", "nativeMessaging"],
+  "permissions": ["activeTab", "nativeMessaging", "storage"],
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"

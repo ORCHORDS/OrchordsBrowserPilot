@@ -35,8 +35,8 @@ test("extension foundation is a permission-minimal Manifest V3 package", async (
   const permissions = manifest.permissions ?? [];
   assert.deepEqual(
     permissions,
-    ["activeTab", "nativeMessaging"],
-    "extension may request only temporary tab access plus the local native bridge",
+    ["activeTab", "nativeMessaging", "storage"],
+    "extension may request temporary tab access, the local native bridge, and restart-safe extension storage only",
   );
   for (const permission of ["debugger", "scripting", "tabs", "webRequest"]) {
     assert.equal(permissions.includes(permission), false, `extension must not request ${permission}`);
