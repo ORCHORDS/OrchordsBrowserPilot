@@ -104,13 +104,15 @@ export const clickTool: ToolDef = {
 export const typeTool: ToolDef = {
   name: "browser_type",
   description: "Type text into the focused, matched, or ref-targeted element using keyboard events.",
-  schema: z.object({
-    text: z.string(),
-    ref: z.string().optional(),
-    selector: z.string().optional(),
-    slowly: z.boolean().optional(),
-    submit: z.boolean().optional(),
-  }),
+  schema: z
+    .object({
+      text: z.string(),
+      ref: z.string().optional(),
+      selector: z.string().optional(),
+      slowly: z.boolean().optional(),
+      submit: z.boolean().optional(),
+    })
+    .refine((v) => !(v.ref && v.selector), { message: "Provide at most one of ref or selector" }),
   handler: async (args, ctx) => {
     const { text, ref, selector, slowly, submit } = args as {
       text: string;
