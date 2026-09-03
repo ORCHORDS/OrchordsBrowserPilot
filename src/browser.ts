@@ -5,6 +5,106 @@ export interface BrowserManager {
   close(): Promise<void>;
 }
 
+export type ExtensionBrowserName = "chrome" | "edge";
+export type ExtensionConnectionState = "connected" | "disconnected" | "reconnecting" | "version_mismatch";
+
+export interface ExtensionProviderDescriptorInput {
+  browser: ExtensionBrowserName;
+  profileId: string;
+  tabId: number;
+  windowId: number;
+  connectionEpoch: string;
+  connectionState: ExtensionConnectionState;
+  extensionVersion: string;
+  protocolVersion: number;
+  connectionId: string;
+  policyAuthorityId: string;
+  nativeMessaging: boolean;
+  debugger: boolean;
+}
+
+export interface ExtensionProviderDescriptor {
+  provider: "extension";
+  browser: ExtensionBrowserName;
+  transport: "extension";
+  connectionState: ExtensionConnectionState;
+  connectionEpoch: string;
+  target: {
+    kind: "tab";
+    profileId: string;
+    tabId: number;
+    windowId: number;
+    identity: string;
+  };
+  ownership: {
+    browser: "external";
+    context: "external";
+    target: "external";
+  };
+  capabilities: {
+    existingTab: true;
+    currentTab: true;
+    sidePanel: true;
+    nativeMessaging: boolean;
+    debugger: boolean;
+  };
+  protocol: {
+    extensionVersion: string;
+    protocolVersion: number;
+  };
+  correlation: {
+    connectionId: string;
+    policyAuthorityId: string;
+  };
+}
+
+/**
+ * Describe an extension-owned browser tab without implying that Web Pilot
+ * owns or can silently replace the browser, profile, or tab. Chrome tab IDs
+ * are only unique within a browser session, so `connectionEpoch` is part of
+ * the canonical target identity. MV3 service-worker restarts reuse the same
+ * epoch; a new browser session must mint a new one and therefore cannot
+ * inherit authority merely because a numeric tab id is reused.
+ */
+export function createExtensionProviderDescriptor(
+  input: ExtensionProviderDescriptorInput,
+): ExtensionProviderDescriptor {
+  return {
+    provider: "extension",
+    browser: input.browser,
+    transport: "extension",
+    connectionState: input.connectionState,
+    connectionEpoch: input.connectionEpoch,
+    target: {
+      kind: "tab",
+      profileId: input.profileId,
+      tabId: input.tabId,
+      windowId: input.windowId,
+      identity: `extension:${input.browser}:${input.profileId}:${input.connectionEpoch}:${input.tabId}`,
+    },
+    ownership: {
+      browser: "external",
+      context: "external",
+      target: "external",
+    },
+    capabilities: {
+      existingTab: true,
+      currentTab: true,
+      sidePanel: true,
+      nativeMessaging: input.nativeMessaging,
+      debugger: input.debugger,
+    },
+    protocol: {
+      extensionVersion: input.extensionVersion,
+      protocolVersion: input.protocolVersion,
+    },
+    correlation: {
+      connectionId: input.connectionId,
+      policyAuthorityId: input.policyAuthorityId,
+    },
+  };
+}
+
 class LocalBrowserManager implements BrowserManager {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
