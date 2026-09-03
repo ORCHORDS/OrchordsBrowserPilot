@@ -519,11 +519,35 @@ function stripReservedArgs(args: Record<string, unknown>): Record<string, unknow
 
 function toolInputSchema(schema: import("zod").ZodTypeAny): Record<string, unknown> {
   // Convert Zod to JSON Schema (draft-07 dialect — the broadest MCP-client support).
-  // The result already satisfies the MCP SDK's `inputSchema` shape: type "object"
-  // plus optional properties/required plus extras like enum/default/format/minimum
-  // for primitives. We drop the auto-injected $schema so it doesn't clutter the wire.
+  // Primitive/property constraints remain generated from Zod. Representable
+  // cross-field target rules that `.refine()` cannot serialize are merged as
+  // standard JSON Schema composition so wire and runtime contracts agree.
   const json = zodToJsonSchema(schema, { target: "jsonSchema7" }) as Record<string, unknown>;
   delete json.$schema;
+
+  const toolName = allTools.find((tool) => tool.schema === schema)?.name;
+  if (toolName === "browser_click") {
+    json.oneOf = [
+      {
+        required: ["ref"],
+        not: { anyOf: [{ required: ["selector"] }, { required: ["x"] }, { required: ["y"] }] },
+      },
+      {
+        required: ["selector"],
+        not: { anyOf: [{ required: ["ref"] }, { required: ["x"] }, { required: ["y"] }] },
+      },
+      {
+        required: ["x", "y"],
+        not: { anyOf: [{ required: ["ref"] }, { required: ["selector"] }] },
+      },
+    ];
+  } else if (toolName === "browser_drag") {
+    json.allOf = [
+      { oneOf: [{ required: ["fromRef"] }, { required: ["fromSelector"] }] },
+      { oneOf: [{ required: ["toRef"] }, { required: ["toSelector"] }] },
+    ];
+  }
+
   return json;
 }
 
