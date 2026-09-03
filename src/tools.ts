@@ -25,7 +25,7 @@ async function page(ctx: ToolContext) {
 export const navigate: ToolDef = {
   name: "browser_navigate",
   description: "Open a URL in the browser.",
-  schema: z.object({ url: z.string().url() }),
+  schema: z.object({ url: z.string().url() }).strict(),
   handler: async (args, ctx) => {
     const { url } = args as { url: string };
     const p = await page(ctx);
@@ -76,6 +76,7 @@ export const clickTool: ToolDef = {
       x: z.number().int().nonnegative().optional(),
       y: z.number().int().nonnegative().optional(),
     })
+    .strict()
     .refine((v) => {
       const hasRef = Boolean(v.ref);
       const hasSelector = Boolean(v.selector);
@@ -112,6 +113,7 @@ export const typeTool: ToolDef = {
       slowly: z.boolean().optional(),
       submit: z.boolean().optional(),
     })
+    .strict()
     .refine((v) => !(v.ref && v.selector), { message: "Provide at most one of ref or selector" }),
   handler: async (args, ctx) => {
     const { text, ref, selector, slowly, submit } = args as {
@@ -141,6 +143,7 @@ export const fill: ToolDef = {
   description: "Replace an input value via Playwright's fill() — accepts a selector or a snapshot ref.",
   schema: z
     .object({ ref: z.string().optional(), selector: z.string().optional(), value: z.string() })
+    .strict()
     .refine((v) => Boolean(v.ref) !== Boolean(v.selector), { message: "Provide exactly one of ref or selector" }),
   handler: async (args, ctx) => {
     const { ref, selector, value } = args as { ref?: string; selector?: string; value: string };
@@ -158,7 +161,7 @@ export const fill: ToolDef = {
 export const press: ToolDef = {
   name: "browser_press",
   description: "Press a non-text key (Enter, Tab, Escape, arrows, etc.).",
-  schema: z.object({ key: z.string() }),
+  schema: z.object({ key: z.string() }).strict(),
   handler: async (args, ctx) => {
     const { key } = args as { key: string };
     const p = await page(ctx);
@@ -172,6 +175,7 @@ export const hover: ToolDef = {
   description: "Hover an element. Accepts a snapshot ref or a selector.",
   schema: z
     .object({ ref: z.string().optional(), selector: z.string().optional() })
+    .strict()
     .refine((v) => Boolean(v.ref) !== Boolean(v.selector), { message: "Provide exactly one of ref or selector" }),
   handler: async (args, ctx) => {
     const { ref, selector } = args as { ref?: string; selector?: string };
@@ -196,6 +200,7 @@ export const drag: ToolDef = {
       toRef: z.string().optional(),
       toSelector: z.string().optional(),
     })
+    .strict()
     .refine(
       (v) => Boolean(v.fromRef) !== Boolean(v.fromSelector) && Boolean(v.toRef) !== Boolean(v.toSelector),
       { message: "Provide exactly one source target and exactly one destination target" },
@@ -243,6 +248,7 @@ export const select: ToolDef = {
       value: z.string().optional(),
       label: z.string().optional(),
     })
+    .strict()
     .refine((v) => Boolean(v.ref) !== Boolean(v.selector), { message: "Provide exactly one of ref or selector" })
     .refine((v) => Boolean(v.value) !== Boolean(v.label), { message: "Provide exactly one of value or label" }),
   handler: async (args, ctx) => {
@@ -263,11 +269,13 @@ export const select: ToolDef = {
 export const screenshot: ToolDef = {
   name: "browser_screenshot",
   description: "Capture a PNG screenshot. Returns base64 or saves to disk if savePath is set.",
-  schema: z.object({
-    fullPage: z.boolean().optional(),
-    savePath: z.string().optional(),
-    element: z.string().optional(),
-  }),
+  schema: z
+    .object({
+      fullPage: z.boolean().optional(),
+      savePath: z.string().optional(),
+      element: z.string().optional(),
+    })
+    .strict(),
   handler: async (args, ctx) => {
     const { fullPage, savePath, element } = args as {
       fullPage?: boolean;
@@ -294,7 +302,7 @@ export const screenshot: ToolDef = {
 export const evaluate: ToolDef = {
   name: "browser_evaluate",
   description: "Run a JS expression in the page context and return its JSON-serializable result.",
-  schema: z.object({ expression: z.string() }),
+  schema: z.object({ expression: z.string() }).strict(),
   handler: async (args, ctx) => {
     const { expression } = args as { expression: string };
     const p = await page(ctx);
@@ -307,12 +315,14 @@ export const evaluate: ToolDef = {
 export const wait: ToolDef = {
   name: "browser_wait",
   description: "Wait for a selector/text or a fixed duration.",
-  schema: z.object({
-    time: z.number().nonnegative().optional(),
-    text: z.string().optional(),
-    textGone: z.string().optional(),
-    selector: z.string().optional(),
-  }),
+  schema: z
+    .object({
+      time: z.number().nonnegative().optional(),
+      text: z.string().optional(),
+      textGone: z.string().optional(),
+      selector: z.string().optional(),
+    })
+    .strict(),
   handler: async (args, ctx) => {
     const { time, text, textGone, selector } = args as {
       time?: number;
@@ -335,10 +345,12 @@ export const wait: ToolDef = {
 export const consoleTool: ToolDef = {
   name: "browser_console",
   description: "Read console messages captured for the current session.",
-  schema: z.object({
-    level: z.enum(["log", "info", "warn", "error", "debug"]).default("log"),
-    limit: z.number().int().positive().max(500).default(100),
-  }),
+  schema: z
+    .object({
+      level: z.enum(["log", "info", "warn", "error", "debug"]).default("log"),
+      limit: z.number().int().positive().max(500).default(100),
+    })
+    .strict(),
   handler: async (args, ctx) => {
     const { level, limit } = args as { level: "log" | "info" | "warn" | "error" | "debug"; limit: number };
     return { messages: ctx.session.diagnostics.console(level, limit) };
@@ -348,10 +360,12 @@ export const consoleTool: ToolDef = {
 export const network: ToolDef = {
   name: "browser_network",
   description: "List network requests captured for the current session.",
-  schema: z.object({
-    static: z.boolean().default(false),
-    limit: z.number().int().positive().max(500).default(200),
-  }),
+  schema: z
+    .object({
+      static: z.boolean().default(false),
+      limit: z.number().int().positive().max(500).default(200),
+    })
+    .strict(),
   handler: async (args, ctx) => {
     const { static: includeStatic, limit } = args as { static: boolean; limit: number };
     return { requests: ctx.session.diagnostics.network(includeStatic, limit) };
@@ -361,11 +375,13 @@ export const network: ToolDef = {
 export const captchaSolve: ToolDef = {
   name: "browser_captcha_solve",
   description: "Forward a captcha challenge to the configured solver (PILOT_CAPTCHA_SOLVER_URL).",
-  schema: z.object({
-    siteKey: z.string(),
-    pageUrl: z.string().url(),
-    type: z.enum(["recaptcha-v2", "recaptcha-v3", "hcaptcha", "turnstile"]).default("recaptcha-v2"),
-  }),
+  schema: z
+    .object({
+      siteKey: z.string(),
+      pageUrl: z.string().url(),
+      type: z.enum(["recaptcha-v2", "recaptcha-v3", "hcaptcha", "turnstile"]).default("recaptcha-v2"),
+    })
+    .strict(),
   handler: async (args, ctx) => {
     const { siteKey, pageUrl, type } = args as { siteKey: string; pageUrl: string; type: string };
     const cfg = (ctx as unknown as SolverConfig).solver;
