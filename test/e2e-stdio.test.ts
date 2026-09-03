@@ -166,4 +166,55 @@ describe("E2E stdio (P0 #1 state persistence + #2 ref resolution)", () => {
       "console buffer should contain the page's console.log",
     );
   });
+
+  it("mixed ref/selector drag targets execute instead of silently succeeding (#4)", async () => {
+    const html = `
+      <button id="source" draggable="true">Drag</button>
+      <button id="drop">Drop</button>
+      <script>
+        const source = document.getElementById('source');
+        const drop = document.getElementById('drop');
+        source.addEventListener('dragstart', (event) => event.dataTransfer.setData('text/plain', 'payload'));
+        drop.addEventListener('dragover', (event) => event.preventDefault());
+        drop.addEventListener('drop', (event) => {
+          event.preventDefault();
+          document.body.dataset.dropped = 'yes';
+        });
+      </script>
+    `;
+    const nav = await client.callTool("browser_navigate", {
+      url: `data:text/html,${encodeURIComponent(html)}`,
+    });
+    assert.equal(nav.isError, false);
+
+    const snap = await client.callTool("browser_snapshot", {});
+    const snapBody = JSON.parse(snap.text) as { snapshot: string };
+    const sourceMatch = snapBody.snapshot.match(/- button "Drag" \[ref=(\w+)\]/);
+    const dropMatch = snapBody.snapshot.match(/- button "Drop" \[ref=(\w+)\]/);
+    assert.ok(sourceMatch, `source ref not found in snapshot:\n${snapBody.snapshot}`);
+    assert.ok(dropMatch, `drop ref not found in snapshot:\n${snapBody.snapshot}`);
+
+    const refToSelector = await client.callTool("browser_drag", {
+      fromRef: sourceMatch[1],
+      toSelector: "#drop",
+    });
+    assert.equal(refToSelector.isError, false);
+    const firstState = await client.callTool("browser_evaluate", {
+      expression: "document.body.dataset.dropped ?? null",
+    });
+    assert.equal((JSON.parse(firstState.text) as { result: string | null }).result, "yes");
+
+    await client.callTool("browser_evaluate", {
+      expression: "delete document.body.dataset.dropped",
+    });
+    const selectorToRef = await client.callTool("browser_drag", {
+      fromSelector: "#source",
+      toRef: dropMatch[1],
+    });
+    assert.equal(selectorToRef.isError, false);
+    const secondState = await client.callTool("browser_evaluate", {
+      expression: "document.body.dataset.dropped ?? null",
+    });
+    assert.equal((JSON.parse(secondState.text) as { result: string | null }).result, "yes");
+  });
 });
