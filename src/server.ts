@@ -545,6 +545,8 @@ function toolInputSchema(schema: import("zod").ZodTypeAny): Record<string, unkno
         not: { anyOf: [{ required: ["ref"] }, { required: ["selector"] }] },
       },
     ];
+  } else if (toolName === "browser_type") {
+    json.not = { required: ["ref", "selector"] };
   } else if (toolName === "browser_drag") {
     json.allOf = [
       { oneOf: [{ required: ["fromRef"] }, { required: ["fromSelector"] }] },
