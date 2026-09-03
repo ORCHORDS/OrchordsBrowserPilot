@@ -196,9 +196,10 @@ export const drag: ToolDef = {
       toRef: z.string().optional(),
       toSelector: z.string().optional(),
     })
-    .refine((v) => (v.fromRef || v.fromSelector) && (v.toRef || v.toSelector), {
-      message: "Provide fromRef/fromSelector AND toRef/toSelector",
-    }),
+    .refine(
+      (v) => Boolean(v.fromRef) !== Boolean(v.fromSelector) && Boolean(v.toRef) !== Boolean(v.toSelector),
+      { message: "Provide exactly one source target and exactly one destination target" },
+    ),
   handler: async (args, ctx) => {
     const { fromRef, fromSelector, toRef, toSelector } = args as {
       fromRef?: string;
