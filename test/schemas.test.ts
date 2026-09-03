@@ -29,10 +29,9 @@ describe("tool JSON schemas (P0 #4)", () => {
     assert.equal(props.url.format, "uri");
   });
 
-  it("click marks only the discriminating fields correctly and respects refinement", () => {
+  it("click advertises exactly one target mode on the MCP wire", () => {
     const { def, schema } = tool("browser_click");
     const props = schema.properties as Record<string, Record<string, unknown>>;
-    // All four fields are optional in the Zod object — none should be required.
     assert.ok(!Array.isArray(schema.required) || schema.required.length === 0);
     assert.equal(props.ref.type, "string");
     assert.equal(props.selector.type, "string");
@@ -40,8 +39,30 @@ describe("tool JSON schemas (P0 #4)", () => {
     assert.equal(props.x.minimum, 0);
     assert.equal(props.y.type, "integer");
     assert.equal(props.y.minimum, 0);
-    // The .refine() keeps the runtime contract; the schema stays faithful.
-    assert.ok(def.schema.safeParse({}).success === false, "refine must still reject empty input");
+    assert.ok(def.schema.safeParse({}).success === false, "runtime must reject empty input");
+
+    assert.deepEqual(schema.oneOf, [
+      {
+        required: ["ref"],
+        not: { anyOf: [{ required: ["selector"] }, { required: ["x"] }, { required: ["y"] }] },
+      },
+      {
+        required: ["selector"],
+        not: { anyOf: [{ required: ["ref"] }, { required: ["x"] }, { required: ["y"] }] },
+      },
+      {
+        required: ["x", "y"],
+        not: { anyOf: [{ required: ["ref"] }, { required: ["selector"] }] },
+      },
+    ]);
+  });
+
+  it("drag advertises one source mode and one destination mode on the MCP wire", () => {
+    const { schema } = tool("browser_drag");
+    assert.deepEqual(schema.allOf, [
+      { oneOf: [{ required: ["fromRef"] }, { required: ["fromSelector"] }] },
+      { oneOf: [{ required: ["toRef"] }, { required: ["toSelector"] }] },
+    ]);
   });
 
   it("console_tool exposes enum + default + numeric bounds", () => {
