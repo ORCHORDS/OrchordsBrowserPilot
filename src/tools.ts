@@ -198,12 +198,26 @@ export const drag: ToolDef = {
       toSelector?: string;
     };
     const p = await page(ctx);
-    if (fromRef && toRef) {
-      const from = resolveRef(p, ctx.session.refs, fromRef);
-      const to = resolveRef(p, ctx.session.refs, toRef);
-      await from.dragTo(to);
-    } else if (fromSelector && toSelector) {
-      await p.dragAndDrop(fromSelector, toSelector);
+
+    const hoverSource = async () => {
+      if (fromRef) await resolveRef(p, ctx.session.refs, fromRef).hover();
+      else await p.locator(fromSelector!).hover();
+    };
+    const hoverTarget = async () => {
+      if (toRef) await resolveRef(p, ctx.session.refs, toRef).hover();
+      else await p.locator(toSelector!).hover();
+    };
+
+    // Playwright's documented manual drag sequence works across target
+    // representations. Repeat the destination hover so pages that depend on
+    // dragover receive the second mouse move consistently in all browsers.
+    await hoverSource();
+    await p.mouse.down();
+    try {
+      await hoverTarget();
+      await hoverTarget();
+    } finally {
+      await p.mouse.up();
     }
     return { ok: true };
   },
