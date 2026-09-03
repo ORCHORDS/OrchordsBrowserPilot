@@ -101,6 +101,16 @@ export function createBrowserManager(wsEndpoint: string | undefined, headless: b
   return wsEndpoint ? new RemoteBrowserManager(wsEndpoint, headless) : new LocalBrowserManager(headless);
 }
 
+export type ConsoleSeverity = "debug" | "info" | "warning" | "error";
+
+export interface ConsoleDiagnostic {
+  level: string;
+  severity: ConsoleSeverity;
+  text: string;
+  at: number;
+  location: { url: string; line: number; column: number };
+}
+
 /**
  * Per-session console/network diagnostics buffer. Replaces the module-level
  * arrays that previously leaked state across sessions (issue #3).
@@ -111,7 +121,7 @@ export interface SessionDiagnostics {
   onConsole(msg: ConsoleMessage): void;
   onRequestFinished(url: string, method: string, status: number, type: string): void;
   onRequestFailed(url: string, method: string, type: string): void;
-  console(level: string, limit: number): Array<{ level: string; text: string; at: number }>;
+  console(level: string, limit: number): ConsoleDiagnostic[];
   network(includeStatic: boolean, limit: number): Array<{ url: string; method: string; status: number; type: string }>;
   readonly bounded: { console: number; network: number };
 }
@@ -121,9 +131,37 @@ const NETWORK_CAP = 2000;
 const CONSOLE_LEVEL_ORDER = ["debug", "log", "info", "warn", "error"] as const;
 const STATIC_RESOURCE_TYPES = new Set(["script", "stylesheet", "image", "font"]);
 
+function normalizedConsoleSeverity(level: string): ConsoleSeverity {
+  if (level === "error" || level === "assert") return "error";
+  if (level === "warning") return "warning";
+  if (level === "debug" || level === "trace") return "debug";
+  return "info";
+}
+
 function consoleSeverityRank(level: string): number {
-  const normalized = level === "warning" ? "warn" : level;
-  return CONSOLE_LEVEL_ORDER.indexOf(normalized as (typeof CONSOLE_LEVEL_ORDER)[number]);
+  if (level === "warning") return CONSOLE_LEVEL_ORDER.indexOf("warn");
+  if (level === "assert") return CONSOLE_LEVEL_ORDER.indexOf("error");
+  if (level === "trace") return CONSOLE_LEVEL_ORDER.indexOf("debug");
+  if (level === "log") return CONSOLE_LEVEL_ORDER.indexOf("log");
+  if (level === "debug" || level === "info" || level === "error") {
+    return CONSOLE_LEVEL_ORDER.indexOf(level);
+  }
+  return CONSOLE_LEVEL_ORDER.indexOf("info");
+}
+
+function consoleLocation(msg: ConsoleMessage): ConsoleDiagnostic["location"] {
+  const location = msg.location() as unknown as {
+    url?: string;
+    line?: number;
+    column?: number;
+    lineNumber?: number;
+    columnNumber?: number;
+  };
+  return {
+    url: location.url ?? "",
+    line: location.line ?? location.lineNumber ?? 0,
+    column: location.column ?? location.columnNumber ?? 0,
+  };
 }
 
 function isSuccessfulStaticResource(request: { status: number; type: string }): boolean {
@@ -131,11 +169,18 @@ function isSuccessfulStaticResource(request: { status: number; type: string }): 
 }
 
 export function createDiagnostics(): SessionDiagnostics {
-  const consoleBuf: Array<{ level: string; text: string; at: number }> = [];
+  const consoleBuf: ConsoleDiagnostic[] = [];
   const netBuf: Array<{ url: string; method: string; status: number; type: string }> = [];
   return {
     onConsole(msg) {
-      consoleBuf.push({ level: msg.type(), text: msg.text(), at: Date.now() });
+      const level = msg.type();
+      consoleBuf.push({
+        level,
+        severity: normalizedConsoleSeverity(level),
+        text: msg.text(),
+        at: msg.timestamp(),
+        location: consoleLocation(msg),
+      });
       if (consoleBuf.length > CONSOLE_CAP) consoleBuf.shift();
     },
     onRequestFinished(url, method, status, type) {
