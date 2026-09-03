@@ -132,7 +132,7 @@ export const fill: ToolDef = {
   description: "Replace an input value via Playwright's fill() — accepts a selector or a snapshot ref.",
   schema: z
     .object({ ref: z.string().optional(), selector: z.string().optional(), value: z.string() })
-    .refine((v) => v.ref || v.selector, { message: "Provide ref or selector" }),
+    .refine((v) => Boolean(v.ref) !== Boolean(v.selector), { message: "Provide exactly one of ref or selector" }),
   handler: async (args, ctx) => {
     const { ref, selector, value } = args as { ref?: string; selector?: string; value: string };
     const p = await page(ctx);
@@ -163,7 +163,7 @@ export const hover: ToolDef = {
   description: "Hover an element. Accepts a snapshot ref or a selector.",
   schema: z
     .object({ ref: z.string().optional(), selector: z.string().optional() })
-    .refine((v) => v.ref || v.selector, { message: "Provide ref or selector" }),
+    .refine((v) => Boolean(v.ref) !== Boolean(v.selector), { message: "Provide exactly one of ref or selector" }),
   handler: async (args, ctx) => {
     const { ref, selector } = args as { ref?: string; selector?: string };
     const p = await page(ctx);
@@ -233,7 +233,8 @@ export const select: ToolDef = {
       value: z.string().optional(),
       label: z.string().optional(),
     })
-    .refine((v) => v.ref || v.selector, { message: "Provide ref or selector" }),
+    .refine((v) => Boolean(v.ref) !== Boolean(v.selector), { message: "Provide exactly one of ref or selector" })
+    .refine((v) => Boolean(v.value) !== Boolean(v.label), { message: "Provide exactly one of value or label" }),
   handler: async (args, ctx) => {
     const { ref, selector, value, label } = args as {
       ref?: string;
@@ -242,8 +243,7 @@ export const select: ToolDef = {
       label?: string;
     };
     const p = await page(ctx);
-    const option = value ? value : label ? { label } : null;
-    if (!option) throw new Error("Provide value or label");
+    const option = value ? value : { label: label! };
     if (ref) await resolveRef(p, ctx.session.refs, ref).selectOption(option);
     else await p.locator(selector!).selectOption(option);
     return { ok: true };
