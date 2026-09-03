@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 import { policyTools } from "../src/policy/tools.ts";
 import { toolInputSchema } from "../src/server.ts";
@@ -153,6 +154,14 @@ const cases: Record<string, CallCase[]> = {
 
 const tools = [...allTools, ...policyTools];
 const passthroughTools = new Set(["browser_snapshot", "browser_propose_action"]);
+const crossFieldTools = new Set([
+  "browser_click",
+  "browser_type",
+  "browser_fill",
+  "browser_hover",
+  "browser_drag",
+  "browser_select",
+]);
 
 function byName(name: string): ToolDef {
   const tool = tools.find((candidate) => candidate.name === name);
@@ -218,6 +227,26 @@ describe("MCP JSON Schema and runtime validation corpus (#4)", () => {
         `${tool.name} wire undeclared-property contract: ${ajv.errorsText(validate.errors)}`,
       );
       assert.equal(runtimeValid, wireValid, `${tool.name} undeclared-property runtime/wire mismatch`);
+    }
+  });
+
+  it("raw Zod JSON Schema carries representable cross-field contracts without server patches", () => {
+    const ajv = new Ajv({ allErrors: true, strict: false });
+    addFormats(ajv);
+
+    for (const name of crossFieldTools) {
+      const tool = byName(name);
+      const rawSchema = zodToJsonSchema(tool.schema, { target: "jsonSchema7" }) as Record<string, unknown>;
+      const validate = ajv.compile(rawSchema);
+
+      for (const testCase of cases[name]) {
+        const rawValid = validate(testCase.args) as boolean;
+        assert.equal(
+          rawValid,
+          testCase.valid,
+          `${name} raw generated schema disagrees for ${testCase.label}: ${ajv.errorsText(validate.errors)}`,
+        );
+      }
     }
   });
 });
