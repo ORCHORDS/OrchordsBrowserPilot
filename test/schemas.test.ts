@@ -65,6 +65,50 @@ describe("tool JSON schemas (P0 #4)", () => {
     ]);
   });
 
+  it("fill and hover advertise exactly one element target and reject ambiguous runtime input", () => {
+    for (const name of ["browser_fill", "browser_hover"]) {
+      const { def, schema } = tool(name);
+      assert.deepEqual(schema.oneOf, [
+        { required: ["ref"], not: { required: ["selector"] } },
+        { required: ["selector"], not: { required: ["ref"] } },
+      ], `${name}: wire target contract`);
+      assert.equal(
+        def.schema.safeParse({ ref: "p1s1_r1", selector: "#x", ...(name === "browser_fill" ? { value: "x" } : {}) }).success,
+        false,
+        `${name}: runtime must reject ambiguous ref+selector`,
+      );
+    }
+  });
+
+  it("select advertises exactly one element target and exactly one option mode", () => {
+    const { def, schema } = tool("browser_select");
+    assert.deepEqual(schema.allOf, [
+      {
+        oneOf: [
+          { required: ["ref"], not: { required: ["selector"] } },
+          { required: ["selector"], not: { required: ["ref"] } },
+        ],
+      },
+      {
+        oneOf: [
+          { required: ["value"], not: { required: ["label"] } },
+          { required: ["label"], not: { required: ["value"] } },
+        ],
+      },
+    ]);
+    assert.equal(def.schema.safeParse({ selector: "#s" }).success, false, "runtime must require value or label");
+    assert.equal(
+      def.schema.safeParse({ ref: "p1s1_r1", selector: "#s", value: "one" }).success,
+      false,
+      "runtime must reject ambiguous target",
+    );
+    assert.equal(
+      def.schema.safeParse({ selector: "#s", value: "one", label: "One" }).success,
+      false,
+      "runtime must reject ambiguous option mode",
+    );
+  });
+
   it("console_tool exposes enum + default + numeric bounds", () => {
     const { schema } = tool("browser_console");
     const props = schema.properties as Record<string, Record<string, unknown>>;
