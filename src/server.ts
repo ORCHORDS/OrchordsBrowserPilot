@@ -526,6 +526,10 @@ function toolInputSchema(schema: import("zod").ZodTypeAny): Record<string, unkno
   delete json.$schema;
 
   const toolName = allTools.find((tool) => tool.schema === schema)?.name;
+  const exclusiveTarget = [
+    { required: ["ref"], not: { required: ["selector"] } },
+    { required: ["selector"], not: { required: ["ref"] } },
+  ];
   if (toolName === "browser_click") {
     json.oneOf = [
       {
@@ -545,6 +549,18 @@ function toolInputSchema(schema: import("zod").ZodTypeAny): Record<string, unkno
     json.allOf = [
       { oneOf: [{ required: ["fromRef"] }, { required: ["fromSelector"] }] },
       { oneOf: [{ required: ["toRef"] }, { required: ["toSelector"] }] },
+    ];
+  } else if (toolName === "browser_fill" || toolName === "browser_hover") {
+    json.oneOf = exclusiveTarget;
+  } else if (toolName === "browser_select") {
+    json.allOf = [
+      { oneOf: exclusiveTarget },
+      {
+        oneOf: [
+          { required: ["value"], not: { required: ["label"] } },
+          { required: ["label"], not: { required: ["value"] } },
+        ],
+      },
     ];
   }
 
