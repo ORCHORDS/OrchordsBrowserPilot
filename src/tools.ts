@@ -69,24 +69,11 @@ export const clickTool: ToolDef = {
   name: "browser_click",
   description:
     "Click an element identified by a snapshot ref, CSS selector, or x+y coordinates. Prefer `ref` from browser_snapshot.",
-  schema: z
-    .object({
-      ref: z.string().optional(),
-      selector: z.string().optional(),
-      x: z.number().int().nonnegative().optional(),
-      y: z.number().int().nonnegative().optional(),
-    })
-    .strict()
-    .refine((v) => {
-      const hasRef = Boolean(v.ref);
-      const hasSelector = Boolean(v.selector);
-      const hasAnyCoordinate = v.x !== undefined || v.y !== undefined;
-      const hasCompleteCoordinates = v.x !== undefined && v.y !== undefined;
-      const modes = Number(hasRef) + Number(hasSelector) + Number(hasAnyCoordinate);
-      return modes === 1 && (!hasAnyCoordinate || hasCompleteCoordinates);
-    }, {
-      message: "Provide exactly one of ref, selector, or complete x+y",
-    }),
+  schema: z.union([
+    z.object({ ref: z.string() }).strict(),
+    z.object({ selector: z.string() }).strict(),
+    z.object({ x: z.number().int().nonnegative(), y: z.number().int().nonnegative() }).strict(),
+  ]),
   handler: async (args, ctx) => {
     const { ref, selector, x, y } = args as { ref?: string; selector?: string; x?: number; y?: number };
     const p = await page(ctx);
@@ -105,16 +92,25 @@ export const clickTool: ToolDef = {
 export const typeTool: ToolDef = {
   name: "browser_type",
   description: "Type text into the focused, matched, or ref-targeted element using keyboard events.",
-  schema: z
-    .object({
+  schema: z.union([
+    z.object({
       text: z.string(),
-      ref: z.string().optional(),
-      selector: z.string().optional(),
       slowly: z.boolean().optional(),
       submit: z.boolean().optional(),
-    })
-    .strict()
-    .refine((v) => !(v.ref && v.selector), { message: "Provide at most one of ref or selector" }),
+    }).strict(),
+    z.object({
+      text: z.string(),
+      ref: z.string(),
+      slowly: z.boolean().optional(),
+      submit: z.boolean().optional(),
+    }).strict(),
+    z.object({
+      text: z.string(),
+      selector: z.string(),
+      slowly: z.boolean().optional(),
+      submit: z.boolean().optional(),
+    }).strict(),
+  ]),
   handler: async (args, ctx) => {
     const { text, ref, selector, slowly, submit } = args as {
       text: string;
@@ -141,10 +137,10 @@ export const typeTool: ToolDef = {
 export const fill: ToolDef = {
   name: "browser_fill",
   description: "Replace an input value via Playwright's fill() — accepts a selector or a snapshot ref.",
-  schema: z
-    .object({ ref: z.string().optional(), selector: z.string().optional(), value: z.string() })
-    .strict()
-    .refine((v) => Boolean(v.ref) !== Boolean(v.selector), { message: "Provide exactly one of ref or selector" }),
+  schema: z.union([
+    z.object({ ref: z.string(), value: z.string() }).strict(),
+    z.object({ selector: z.string(), value: z.string() }).strict(),
+  ]),
   handler: async (args, ctx) => {
     const { ref, selector, value } = args as { ref?: string; selector?: string; value: string };
     const p = await page(ctx);
@@ -173,10 +169,10 @@ export const press: ToolDef = {
 export const hover: ToolDef = {
   name: "browser_hover",
   description: "Hover an element. Accepts a snapshot ref or a selector.",
-  schema: z
-    .object({ ref: z.string().optional(), selector: z.string().optional() })
-    .strict()
-    .refine((v) => Boolean(v.ref) !== Boolean(v.selector), { message: "Provide exactly one of ref or selector" }),
+  schema: z.union([
+    z.object({ ref: z.string() }).strict(),
+    z.object({ selector: z.string() }).strict(),
+  ]),
   handler: async (args, ctx) => {
     const { ref, selector } = args as { ref?: string; selector?: string };
     const p = await page(ctx);
@@ -193,18 +189,12 @@ export const hover: ToolDef = {
 export const drag: ToolDef = {
   name: "browser_drag",
   description: "Drag from one element to another. Accepts snapshot refs or selectors.",
-  schema: z
-    .object({
-      fromRef: z.string().optional(),
-      fromSelector: z.string().optional(),
-      toRef: z.string().optional(),
-      toSelector: z.string().optional(),
-    })
-    .strict()
-    .refine(
-      (v) => Boolean(v.fromRef) !== Boolean(v.fromSelector) && Boolean(v.toRef) !== Boolean(v.toSelector),
-      { message: "Provide exactly one source target and exactly one destination target" },
-    ),
+  schema: z.union([
+    z.object({ fromRef: z.string(), toRef: z.string() }).strict(),
+    z.object({ fromRef: z.string(), toSelector: z.string() }).strict(),
+    z.object({ fromSelector: z.string(), toRef: z.string() }).strict(),
+    z.object({ fromSelector: z.string(), toSelector: z.string() }).strict(),
+  ]),
   handler: async (args, ctx) => {
     const { fromRef, fromSelector, toRef, toSelector } = args as {
       fromRef?: string;
@@ -241,16 +231,12 @@ export const drag: ToolDef = {
 export const select: ToolDef = {
   name: "browser_select",
   description: "Select an <option> by value or label. Accepts a snapshot ref or a selector.",
-  schema: z
-    .object({
-      ref: z.string().optional(),
-      selector: z.string().optional(),
-      value: z.string().optional(),
-      label: z.string().optional(),
-    })
-    .strict()
-    .refine((v) => Boolean(v.ref) !== Boolean(v.selector), { message: "Provide exactly one of ref or selector" })
-    .refine((v) => Boolean(v.value) !== Boolean(v.label), { message: "Provide exactly one of value or label" }),
+  schema: z.union([
+    z.object({ ref: z.string(), value: z.string() }).strict(),
+    z.object({ ref: z.string(), label: z.string() }).strict(),
+    z.object({ selector: z.string(), value: z.string() }).strict(),
+    z.object({ selector: z.string(), label: z.string() }).strict(),
+  ]),
   handler: async (args, ctx) => {
     const { ref, selector, value, label } = args as {
       ref?: string;
@@ -259,7 +245,7 @@ export const select: ToolDef = {
       label?: string;
     };
     const p = await page(ctx);
-    const option = value ? value : { label: label! };
+    const option = value !== undefined ? value : { label: label! };
     if (ref) await resolveRef(p, ctx.session.refs, ref).selectOption(option);
     else await p.locator(selector!).selectOption(option);
     return { ok: true };
