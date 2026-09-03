@@ -152,6 +152,7 @@ const cases: Record<string, CallCase[]> = {
 };
 
 const tools = [...allTools, ...policyTools];
+const passthroughTools = new Set(["browser_snapshot", "browser_propose_action"]);
 
 function byName(name: string): ToolDef {
   const tool = tools.find((candidate) => candidate.name === name);
@@ -194,6 +195,29 @@ describe("MCP JSON Schema and runtime validation corpus (#4)", () => {
           `${name} runtime/wire mismatch for ${testCase.label}`,
         );
       }
+    }
+  });
+
+  it("wire and runtime agree on undeclared properties", () => {
+    const ajv = new Ajv({ allErrors: true, strict: false });
+    addFormats(ajv);
+
+    for (const tool of tools) {
+      const seed = cases[tool.name].find((testCase) => testCase.valid);
+      assert.ok(seed && typeof seed.args === "object" && seed.args !== null, `${tool.name} needs an object seed`);
+      const args = { ...(seed.args as Record<string, unknown>), __unknown: true };
+      const expected = passthroughTools.has(tool.name);
+      const runtimeValid = tool.schema.safeParse(args).success;
+      const validate = ajv.compile(toolInputSchema(tool.schema));
+      const wireValid = validate(args) as boolean;
+
+      assert.equal(runtimeValid, expected, `${tool.name} runtime undeclared-property contract`);
+      assert.equal(
+        wireValid,
+        expected,
+        `${tool.name} wire undeclared-property contract: ${ajv.errorsText(validate.errors)}`,
+      );
+      assert.equal(runtimeValid, wireValid, `${tool.name} undeclared-property runtime/wire mismatch`);
     }
   });
 });
