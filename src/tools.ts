@@ -76,8 +76,15 @@ export const clickTool: ToolDef = {
       x: z.number().int().nonnegative().optional(),
       y: z.number().int().nonnegative().optional(),
     })
-    .refine((v) => v.ref || v.selector || (v.x !== undefined && v.y !== undefined), {
-      message: "Provide one of: ref, selector, or x+y",
+    .refine((v) => {
+      const hasRef = Boolean(v.ref);
+      const hasSelector = Boolean(v.selector);
+      const hasAnyCoordinate = v.x !== undefined || v.y !== undefined;
+      const hasCompleteCoordinates = v.x !== undefined && v.y !== undefined;
+      const modes = Number(hasRef) + Number(hasSelector) + Number(hasAnyCoordinate);
+      return modes === 1 && (!hasAnyCoordinate || hasCompleteCoordinates);
+    }, {
+      message: "Provide exactly one of ref, selector, or complete x+y",
     }),
   handler: async (args, ctx) => {
     const { ref, selector, x, y } = args as { ref?: string; selector?: string; x?: number; y?: number };
