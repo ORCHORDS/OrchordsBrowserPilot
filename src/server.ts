@@ -48,200 +48,375 @@ export async function startStdio(config: Config): Promise<void> {
   const transport = new StdioServerTransport();
   const server = buildServer(session, solver, { policyMode: config.policy.mode });
   await server.connect(transport);
+  console.error("orchords-web-pilot (stdio) ready");
+
+  const shutdown = async () => {
+    await session.dispose();
+    await manager.close().catch(() => undefined);
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }
 
-/** HTTP transport with DNS-rebinding / CSRF / abuse hardening (P0 #43). */
+/**
+ * HTTP transport: each Mcp-Session-Id maps to its own Session. Requests
+ * without a session id get a fresh session that lives only for the request
+ * lifetime (no id is returned to the client, so the client cannot reuse it).
+ *
+ * The SessionRegistry is the single point that owns BrowserManager
+ * instances — we share one across sessions that share the same id so
+ * navigate -> snapshot -> click sequences see a stable page, and dispose
+ * the manager when no session still references it.
+ */
 export async function startHttp(config: Config): Promise<void> {
-  if (!isLoopbackHost(config.http.host) && !config.http.allowPublicBind) {
+  const solver = { url: config.captcha.url, token: config.captcha.token };
+  const registry = new SessionRegistry();
+
+  // Safe-by-default bind check (issue #43): binding a non-loopback address
+  // without PILOT_HTTP_ALLOW_PUBLIC_BIND is almost always a mistake — the
+  // endpoint drives a browser and has no authentication yet (#42).
+  if (!config.http.allowPublicBind && !isLoopbackHost(config.http.host) && config.http.host !== "0.0.0.0") {
     throw new Error(
-      `Refusing to bind HTTP transport to non-loopback host '${config.http.host}'. ` +
-      `Set PILOT_HTTP_ALLOW_PUBLIC_BIND=true only behind authentication, TLS, and a trusted reverse proxy.`,
+      `Refusing to bind non-loopback host ${config.http.host}. ` +
+        "Set PILOT_HTTP_ALLOW_PUBLIC_BIND=true if this is intentional, and " +
+        "put an authenticating reverse proxy (see issue #42) in front.",
+    );
+  }
+  if (!config.http.allowPublicBind && config.http.host === "0.0.0.0") {
+    throw new Error(
+      "Refusing to bind 0.0.0.0 without authentication. Set PILOT_HTTP_ALLOW_PUBLIC_BIND=true " +
+        "(and front the server with an authenticating proxy) to override.",
     );
   }
 
-  const app = express();
-  app.disable("x-powered-by");
-
-  const allowedHosts = config.http.allowedHosts.length
-    ? config.http.allowedHosts
-    : defaultAllowedHosts(config.http.host, config.http.port);
-  const allowedOrigins = config.http.allowedOrigins.length
-    ? config.http.allowedOrigins
+  const allowedOrigins = config.http.allowedOrigins
+    ? new Set(config.http.allowedOrigins.map((o) => o.toLowerCase()))
     : defaultAllowedOrigins(config.http.host, config.http.port);
-  const hardening = buildHardening({
-    allowedHosts,
+  const allowedHosts = config.http.allowedHosts
+    ? new Set(config.http.allowedHosts.map((h) => h.toLowerCase()))
+    : defaultAllowedHosts(config.http.host);
+
+  const { stack } = buildHardening({
     allowedOrigins,
-    ratePerMinute: config.http.ratePerMinute,
-    maxBodyBytes: config.http.maxBodyBytes,
-    timeoutMs: config.http.timeoutMs,
-    trustedProxies: config.http.trustedProxies,
-    maxConcurrentRequests: config.http.maxConcurrentRequests,
+    allowedHosts,
+    rateLimitPerMinute: config.http.rateLimitPerMinute,
+    maxBodyBytes: config.http.maxBodyKb * 1024,
+    requestTimeoutMs: config.http.requestTimeoutSec * 1000,
+    trustProxy: config.http.trustProxy,
   });
 
-  // Security headers must apply to every response, including early rejection
-  // paths from Host/Origin/rate/body/deadline middleware.
-  app.use(hardening.securityHeaders);
-  app.use(hardening.hostCheck);
-  app.use(hardening.originCheck);
-  app.use(hardening.rateLimit);
-  app.use(hardening.concurrentAdmission);
-  app.use(hardening.methodCheck);
-  app.use(hardening.bodyLimit);
-  app.use(hardening.timeout);
-  app.use(express.json({ limit: config.http.maxBodyBytes }));
+  const app = express();
+  app.use(stack);
+  app.use(express.json({ limit: `${config.http.maxBodyKb}kb` }));
 
-  const sessions = new SessionRegistry({
-    idleMs: config.sessions.idleMs,
-    create: (id) => new Session(
-      id,
-      createBrowserManager(config.browser.wsEndpoint, config.browser.headless),
-      {
+  app.post(config.http.path, async (req, res) => {
+    const incomingId = headerString(req.headers["mcp-session-id"]);
+    const sessionId = incomingId ?? randomUUID();
+    const session = registry.getOrCreate(sessionId, (id) => {
+      const manager = createBrowserManager(config.browser.wsEndpoint, config.browser.headless);
+      return new Session(id, manager, {
         maxConcurrent: config.operations.maxConcurrent,
         queueMax: config.operations.queueMax,
-      },
-    ),
-  });
-  const solver = { url: config.captcha.url, token: config.captcha.token };
-
-  const sweep = setInterval(() => {
-    void sessions.sweep();
-  }, Math.min(config.sessions.idleMs, 60_000));
-  sweep.unref();
-
-  app.get("/health", (_req, res) => {
-    res.status(200).json({ ok: true });
-  });
-
-  app.post("/", async (req, res) => {
-    const incomingSessionId = req.header("Mcp-Session-Id")?.trim();
-    const sessionId = incomingSessionId || randomUUID();
-    const session = sessions.getOrCreate(sessionId);
-    session.touch();
+      });
+    });
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => sessionId,
-      onsessioninitialized: () => undefined,
     });
+
     const server = buildServer(session, solver, { policyMode: config.policy.mode });
-
     res.on("close", () => {
-      void transport.close().catch(() => undefined);
+      transport.close().catch(() => undefined);
     });
-
     try {
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!res.headersSent) {
-        res.status(500).json({ error: "mcp_request_failed", message });
-      } else if (!res.writableEnded) {
-        res.end();
+    } finally {
+      // If the request did NOT advertise a session id (stateless gateway
+      // mode), drop the freshly created session so it doesn't pin a browser
+      // forever. Reused sessions are kept alive by their lastUsed timestamp.
+      if (!incomingId) {
+        await registry.dispose(sessionId).catch(() => undefined);
       }
     }
   });
 
-  await new Promise<void>((resolve, reject) => {
-    const server = app.listen(config.http.port, config.http.host, resolve);
-    server.once("error", reject);
+  app.get(`${config.http.path}/health`, (_req, res) => {
+    // Sum per-session queue stats so the health endpoint exposes both
+    // session count and live backpressure (issue #104).
+    let inFlight = 0;
+    let queued = 0;
+    let overflowed = 0;
+    let cancelled = 0;
+    let completed = 0;
+    for (const session of registry.all()) {
+      const s = session.ops.stats();
+      inFlight += s.inFlight;
+      queued += s.queued;
+      overflowed += s.overflowed;
+      cancelled += s.cancelled;
+      completed += s.completed;
+    }
+    res.json({
+      ok: true,
+      name: "orchords-web-pilot",
+      transport: "http",
+      sessions: registry.size(),
+      queue: { inFlight, queued, overflowed, cancelled, completed },
+    });
+  });
+
+  // Periodically sweep idle sessions — at most once a minute.
+  const sweep = setInterval(() => {
+    registry.sweep().catch(() => undefined);
+  }, 60_000);
+  sweep.unref();
+
+  const shutdown = async () => {
+    clearInterval(sweep);
+    await registry.disposeAll();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
+  app.listen(config.http.port, config.http.host, () => {
+    console.error(
+      `orchords-web-pilot (http) listening on http://${config.http.host}:${config.http.port}${config.http.path}`,
+    );
   });
 }
 
-type CaptchaSolver = { url?: string; token?: string };
-type BuildServerOptions = { policyMode?: "off" | "audit" | "enforce" };
+function headerString(v: string | string[] | undefined): string | undefined {
+  if (Array.isArray(v)) return v[0];
+  return v && v.length > 0 ? v : undefined;
+}
 
-function buildServer(session: Session, captchaSolver: CaptchaSolver, options: BuildServerOptions = {}): Server {
+export function buildServer(
+  session: Session,
+  solver: { url?: string; token?: string },
+  options: { policyMode?: "audit" | "enforce" } = {},
+) {
+  const policyMode = options.policyMode ?? "audit";
   const server = new Server(
-    { name: "orchords-web-pilot", version: "0.1.0" },
-    { capabilities: { tools: {} } },
+    {
+      name: "orchords-web-pilot",
+      version: "0.1.0",
+    },
+    {
+      capabilities: { tools: {} },
+    },
   );
-  const policyMode = options.policyMode ?? "off";
-  const approvalStore = new ApprovalStore();
-  const memoryAudit = new MemoryAuditSink();
-  const audit = composeSinks(memoryAudit, noopSink);
-  const gate = new ActionGate(approvalStore, audit, { mode: policyMode });
-  const tools = [...allTools, ...policyTools];
 
-  const toolMap = new Map(tools.map((tool) => [tool.name, tool]));
+  // Policy layer (issue #81). Each session owns its own approval ledger
+  // and proposal cache so disposal frees the in-memory state. The
+  // `MemoryAuditSink` gives tests deterministic event capture; production
+  // deployments swap it for a sink that forwards to OpenTelemetry / a
+  // durable audit log (issue #52).
+  const audit = new MemoryAuditSink();
+  const approvals = new ApprovalStore();
+  const gate = new ActionGate(approvals, composeSinks([noopSink, audit.asSink()]));
+  const proposals = new Map<string, ProposedActionEnvelope>();
+
+  // Issue #104 — wire the per-session operation queue's lifecycle into
+  // the audit log so overflow, cancellation, and queueing transitions
+  // are visible in the same stream as the policy events. The onEvent
+  // hook is set at Session construction time so we re-bind here to the
+  // local audit sink (each buildServer() owns its own MemoryAuditSink).
+  session.ops.onEvent = (ev: OperationEvent) => {
+    audit.emit({
+      kind: operationEventToAuditKind(ev.kind),
+      ts: Date.now(),
+      sessionId: ev.sessionId,
+      tool: ev.tool,
+      context: operationEventContext(ev),
+    });
+  };
+
+  /** Proposal and dispatch must observe the same server-owned live-state model. */
+  const liveState = (tool: string, args: Record<string, unknown>): Promise<LiveStateSnapshot> =>
+    resolveLiveSnapshot(session, tool, args);
+
+  /**
+   * Canonicalize primitive arguments through the primitive's real Zod schema.
+   * Reserved policy plumbing is extracted/stripped before parsing because Zod
+   * object schemas strip unknown keys by default; proposal and dispatch must
+   * digest the same normalized argument bytes.
+   */
+  const normalizeActionArguments = (
+    toolName: string,
+    rawArgs: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    const target = allTools.find((candidate) => candidate.name === toolName);
+    if (!target) throw new Error(`Unknown primitive tool: ${toolName}`);
+    const parsed = target.schema.parse(stripReservedArgs(rawArgs));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, unknown>;
+  };
+
+  const policyToolsByName = new Map(policyTools.map((t) => [t.name, t]));
+  const exposedTools = [...allTools, ...policyTools];
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: toolInputSchema(tool.schema),
+    tools: exposedTools.map((t: { name: string; description: string; schema: import("zod").ZodTypeAny }) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: toolInputSchema(t.schema),
     })),
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-    const name = request.params.name;
-    const tool = toolMap.get(name);
+    const { name, arguments: args } = request.params;
+    const tool = exposedTools.find((t) => t.name === name);
     if (!tool) {
       return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
     }
 
-    const rawArgs = asRecord(request.params.arguments);
-    const approvalId = typeof rawArgs._approval === "string" ? rawArgs._approval : undefined;
-    const proposalId = typeof rawArgs._proposalId === "string" ? rawArgs._proposalId : undefined;
-    const toolArgs = stripReservedArgs(rawArgs);
-
-    const operationSignal = (extra as { signal?: AbortSignal }).signal;
-    const ctx: ToolContext = {
-      session,
-      get page() {
-        return session.cachedPage();
-      },
-      captchaSolver,
-      signal: operationSignal,
-    };
-
+    // Issue #104 — every tool call goes through the session's operation
+    // queue. The MCP SDK v1 RequestHandlerExtra gives each request an
+    // AbortSignal; passing it into the queue ensures sender cancellation
+    // can remove work that has not started. Once dispatch begins, running
+    // browser/provider work must consume the signal cooperatively (#36).
     try {
-      const parsed = tool.schema.parse(toolArgs);
-      const toolRecord = asRecord(parsed);
-      const initialSnapshot = await resolveLiveSnapshot(session, name, toolRecord);
-      const decision = gate.propose({
-        sessionId: session.id,
-        tool: name,
-        args: toolRecord,
-        initialSnapshot,
-        approvalId,
-        proposalId,
+      return await session.ops.run(name, () => dispatchTool(name, tool, args, request), {
+        signal: extra.signal,
       });
-
-      const extendedCtx: ToolContext = {
-        ...ctx,
-        policy: {
-          gate,
-          decision,
-          initialSnapshot,
-          resolveLiveSnapshot: () => resolveLiveSnapshot(session, name, toolRecord),
-        },
-      };
-
-      if (!decision.permitted && !decision.requiresApproval) {
+    } catch (err) {
+      if (err instanceof OperationQueueFullError) {
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify({
                 ok: false,
-                error: "policy_denied",
-                reason: decision.reason ?? "policy_denied",
-                riskClass: decision.riskClass,
+                error: "queue_full",
+                reason: err.message,
+                queueMax: err.queueMax,
+                opId: err.opId,
+                tool: err.tool,
               }),
             },
           ],
           isError: true,
         };
       }
-
-      if (decision.requiresApproval && !decision.permitted) {
+      if (err instanceof OperationCancelledError) {
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify({
                 ok: false,
-                error: "approval_required",
+                error: err.code,
+                reason: err.reason,
+                opId: err.opId,
+                tool: err.tool,
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+      throw err;
+    }
+  });
+
+  // The actual gate+handler body lives in its own function so the queue
+  // wrap above stays trivial — `dispatchTool` either resolves with a
+  // CallToolResult or throws a structured Error.
+  async function dispatchTool(
+    name: string,
+    tool: { schema: import("zod").ZodTypeAny; handler: (parsed: unknown, ctx: ToolContext) => Promise<unknown> },
+    args: unknown,
+    _request: unknown,
+  ): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+    // Policy tools (propose / approve) carry the gate as part of their
+    // tool context so they can record proposals / mint approval rows.
+    if (policyToolsByName.has(name)) {
+      const baseCtx: ToolContext = { session };
+      try {
+        const parsed = tool.schema.parse(args);
+        // Cache the proposal after a successful `propose` so the
+        // matching `approve` call can resolve envelopeDigest -> envelope.
+        const result = (await tool.handler(parsed, {
+          ...baseCtx,
+          gate,
+          liveState,
+          normalizeActionArguments,
+          proposals,
+          approverId: "user",
+        } as ToolContext)) as { proposalId?: string; envelope?: ProposedActionEnvelope };
+        if (name === "browser_propose_action" && result?.proposalId && result.envelope) {
+          proposals.set(result.proposalId, result.envelope);
+          if (proposals.size > 200) {
+            // Trim oldest to bound memory — proposals are short-lived.
+            const first = proposals.keys().next().value;
+            if (first) proposals.delete(first);
+          }
+        }
+        return { content: [{ type: "text", text: JSON.stringify(result) }] };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
+      }
+    }
+
+    // Primitive tools: gate classifies the call before invoking the
+    // handler. Sensitive / irreversible actions require an approval id
+    // bound to the live envelope digest; the gate re-derives the
+    // envelope from current page state and refuses dispatch on any
+    // mismatch (TOCTOU).
+    const baseCtx: ToolContext = { session };
+    const extendedCtx = { ...baseCtx, solver } as ToolContext & { solver: typeof solver };
+    try {
+      const rawArgs = asRecord(args);
+      const approvalId = typeof rawArgs._approval === "string" ? rawArgs._approval : undefined;
+      const proposalId = typeof rawArgs._proposalId === "string" ? rawArgs._proposalId : undefined;
+      const argsRecord = normalizeActionArguments(name, rawArgs);
+      const parsed = argsRecord;
+      const live = await resolveLiveSnapshot(session, name, argsRecord);
+
+      // Use the cached proposal envelope when present; otherwise mint an
+      // ad-hoc one with the supplied proposalId so the gate's TOCTOU
+      // recompute uses a stable id.
+      let proposal: ProposedActionEnvelope | undefined = proposalId ? proposals.get(proposalId) : undefined;
+      if (!proposal) {
+        proposal = gate.propose({
+          sessionId: session.id,
+          tool: name,
+          arguments: argsRecord,
+          live,
+          proposalId,
+        }).envelope;
+        if (proposalId) proposals.set(proposalId, proposal);
+      }
+
+      const decision = gate.gate({
+        sessionId: session.id,
+        tool: name,
+        arguments: argsRecord,
+        approvalId,
+        live,
+        proposal,
+        proposalEnvelopeDigest: digestEnvelope(proposal),
+      });
+      // Audit mode (issue #81): a missing approval is recorded and flagged
+      // in the response but does NOT block dispatch — this is the explicit
+      // "unconstrained/local" role behavior. Every other denial (tool
+      // denied by policy, envelope tampering/TOCTOU, secret-version drift,
+      // invalid/expired/rejected approval) blocks in every mode: those are
+      // integrity failures, not permission gaps.
+      const blocked =
+        !decision.permitted && !(policyMode === "audit" && decision.reason === "approval_missing");
+      if (blocked) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                ok: false,
+                blocked: true,
                 reason: decision.reason ?? "approval_required",
                 proposalId: decision.envelope.proposalId,
                 envelopeDigest: decision.envelopeDigest,
@@ -272,7 +447,7 @@ function buildServer(session: Session, captchaSolver: CaptchaSolver, options: Bu
       gate.recordDispatch({ sessionId: session.id, tool: name }, { ok: false, reason: message });
       return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
     }
-  });
+  }
 
   return server;
 }
@@ -344,35 +519,11 @@ function stripReservedArgs(args: Record<string, unknown>): Record<string, unknow
 
 function toolInputSchema(schema: import("zod").ZodTypeAny): Record<string, unknown> {
   // Convert Zod to JSON Schema (draft-07 dialect — the broadest MCP-client support).
-  // Primitive/property constraints stay generated from Zod. Cross-field constraints
-  // that Zod `.refine()` cannot serialize are merged below using standard JSON Schema
-  // composition, so MCP clients see the same target-mode contract as the runtime.
+  // The result already satisfies the MCP SDK's `inputSchema` shape: type "object"
+  // plus optional properties/required plus extras like enum/default/format/minimum
+  // for primitives. We drop the auto-injected $schema so it doesn't clutter the wire.
   const json = zodToJsonSchema(schema, { target: "jsonSchema7" }) as Record<string, unknown>;
   delete json.$schema;
-
-  const toolName = allTools.find((tool) => tool.schema === schema)?.name;
-  if (toolName === "browser_click") {
-    json.oneOf = [
-      {
-        required: ["ref"],
-        not: { anyOf: [{ required: ["selector"] }, { required: ["x"] }, { required: ["y"] }] },
-      },
-      {
-        required: ["selector"],
-        not: { anyOf: [{ required: ["ref"] }, { required: ["x"] }, { required: ["y"] }] },
-      },
-      {
-        required: ["x", "y"],
-        not: { anyOf: [{ required: ["ref"] }, { required: ["selector"] }] },
-      },
-    ];
-  } else if (toolName === "browser_drag") {
-    json.allOf = [
-      { oneOf: [{ required: ["fromRef"] }, { required: ["fromSelector"] }] },
-      { oneOf: [{ required: ["toRef"] }, { required: ["toSelector"] }] },
-    ];
-  }
-
   return json;
 }
 
