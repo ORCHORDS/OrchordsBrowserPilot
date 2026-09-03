@@ -96,12 +96,14 @@ export const approveAction: ToolDef = {
   name: "browser_approve_action",
   description:
     "Mint a one-time approval bound to a previously-proposed envelope digest. The approval is keyed by the SHA-256 envelope digest, the approver identity, and a random nonce; it expires after the configured TTL. Replays of the same approval id are rejected.",
-  schema: z.object({
-    envelopeDigest: z.string().regex(/^[a-f0-9]{64}$/),
-    approverId: z.string().min(1),
-    decision: z.enum(["approve", "deny"]).default("approve"),
-    summary: z.string().optional(),
-  }),
+  schema: z
+    .object({
+      envelopeDigest: z.string().regex(/^[a-f0-9]{64}$/),
+      approverId: z.string().min(1),
+      decision: z.enum(["approve", "deny"]).default("approve"),
+      summary: z.string().optional(),
+    })
+    .strict(),
   handler: async (args, ctx) => {
     const { gate, liveState, session } = ctx as PolicyToolContext;
     const a = args as {
