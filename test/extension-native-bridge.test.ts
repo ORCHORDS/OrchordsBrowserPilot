@@ -17,9 +17,10 @@ test("MV3 extension selects persistent Native Messaging as the local bridge defa
   const worker = await text("extension/service-worker.js");
 
   assert.ok(manifest.permissions?.includes("nativeMessaging"), "nativeMessaging permission must be explicit");
+  assert.match(worker, /const NATIVE_HOST = ["']com\.orchords\.web_pilot["']/, "native host id must be pinned");
   assert.match(
     worker,
-    /chrome\.runtime\.connectNative\(["']com\.orchords\.web_pilot["']\)/,
+    /chrome\.runtime\.connectNative\(NATIVE_HOST\)/,
     "service worker must use a persistent native messaging port",
   );
   assert.match(worker, /\.onMessage\.addListener\(/, "native port messages must be handled");
