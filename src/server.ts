@@ -518,52 +518,30 @@ function stripReservedArgs(args: Record<string, unknown>): Record<string, unknow
 }
 
 function toolInputSchema(schema: import("zod").ZodTypeAny): Record<string, unknown> {
-  // Convert Zod to JSON Schema (draft-07 dialect — the broadest MCP-client support).
-  // Primitive/property constraints remain generated from Zod. Representable
-  // cross-field target rules that `.refine()` cannot serialize are merged as
-  // standard JSON Schema composition so wire and runtime contracts agree.
+  // MCP currently requires a top-level object schema for tool inputs. Zod
+  // unions correctly serialize their target-mode semantics as `anyOf`, but
+  // that leaves `type` and the combined property catalog on the branches.
+  // Lift only that structural metadata to the root; semantic validation stays
+  // entirely in the generated branches so runtime and wire share one owner.
   const json = zodToJsonSchema(schema, { target: "jsonSchema7" }) as Record<string, unknown>;
   delete json.$schema;
 
-  const toolName = allTools.find((tool) => tool.schema === schema)?.name;
-  const exclusiveTarget = [
-    { required: ["ref"], not: { required: ["selector"] } },
-    { required: ["selector"], not: { required: ["ref"] } },
-  ];
-  if (toolName === "browser_click") {
-    json.oneOf = [
-      {
-        required: ["ref"],
-        not: { anyOf: [{ required: ["selector"] }, { required: ["x"] }, { required: ["y"] }] },
-      },
-      {
-        required: ["selector"],
-        not: { anyOf: [{ required: ["ref"] }, { required: ["x"] }, { required: ["y"] }] },
-      },
-      {
-        required: ["x", "y"],
-        not: { anyOf: [{ required: ["ref"] }, { required: ["selector"] }] },
-      },
-    ];
-  } else if (toolName === "browser_type") {
-    json.not = { required: ["ref", "selector"] };
-  } else if (toolName === "browser_drag") {
-    json.allOf = [
-      { oneOf: [{ required: ["fromRef"] }, { required: ["fromSelector"] }] },
-      { oneOf: [{ required: ["toRef"] }, { required: ["toSelector"] }] },
-    ];
-  } else if (toolName === "browser_fill" || toolName === "browser_hover") {
-    json.oneOf = exclusiveTarget;
-  } else if (toolName === "browser_select") {
-    json.allOf = [
-      { oneOf: exclusiveTarget },
-      {
-        oneOf: [
-          { required: ["value"], not: { required: ["label"] } },
-          { required: ["label"], not: { required: ["value"] } },
-        ],
-      },
-    ];
+  if (json.type !== "object" && Array.isArray(json.anyOf)) {
+    const branches = json.anyOf.filter(
+      (branch): branch is Record<string, unknown> =>
+        Boolean(branch) && typeof branch === "object" && !Array.isArray(branch),
+    );
+    if (branches.length === json.anyOf.length && branches.every((branch) => branch.type === "object")) {
+      const properties: Record<string, unknown> = {};
+      for (const branch of branches) {
+        const branchProperties = branch.properties;
+        if (branchProperties && typeof branchProperties === "object" && !Array.isArray(branchProperties)) {
+          Object.assign(properties, branchProperties);
+        }
+      }
+      json.type = "object";
+      json.properties = properties;
+    }
   }
 
   return json;
