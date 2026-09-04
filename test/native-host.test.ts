@@ -25,6 +25,7 @@ test("native host rejects an unapproved browser caller before processing stdin (
       allowedOrigins: [origin],
       profileId: "profile-a",
       pairingFile: "/unused/pairings.json",
+      replayFile: "/unused/replay.json",
       input,
       output,
       errors,
@@ -46,6 +47,7 @@ test("native host first handshake returns one-time pairing credential over frame
     allowedOrigins: [origin],
     profileId: "profile-a",
     pairingFile: path.join(dir, "pairings.json"),
+    replayFile: path.join(dir, "replay.json"),
     input,
     output,
     errors,
@@ -71,6 +73,7 @@ test("native host first handshake returns one-time pairing credential over frame
   assert.equal(decoded.length, 1);
   const message = decoded[0] as {
     type: string;
+    auth?: { pairingId: string; generation: number; mac: string };
     payload: { callerOrigin: string; installId: string; pairingId: string; generation: number; secret?: string };
   };
   assert.equal(message.type, "bridge.paired");
@@ -79,4 +82,5 @@ test("native host first handshake returns one-time pairing credential over frame
   assert.equal(message.payload.pairingId, "pair-1");
   assert.equal(message.payload.generation, 1);
   assert.match(message.payload.secret ?? "", /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(message.auth?.pairingId, "pair-1");
 });

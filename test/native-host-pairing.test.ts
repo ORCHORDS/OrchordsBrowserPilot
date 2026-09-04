@@ -29,6 +29,7 @@ async function handshake(options: {
     allowedOrigins: [origin],
     profileId,
     pairingFile: options.pairingFile,
+    replayFile: `${options.pairingFile}.replay`,
     input,
     output,
     errors,
