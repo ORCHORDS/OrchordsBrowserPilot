@@ -52,6 +52,10 @@ function secretVerifier(secret: string): Buffer {
   return createHash("sha256").update(Buffer.from(secret, "base64url")).digest();
 }
 
+function compareKeys(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function stableJson(value: unknown): string {
   if (value === null || typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
   if (typeof value === "number") {
@@ -62,7 +66,7 @@ function stableJson(value: unknown): string {
   if (typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, v]) => v !== undefined)
-      .sort(([a], [b]) => a.localeCompare(b));
+      .sort(([a], [b]) => compareKeys(a, b));
     return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`).join(",")}}`;
   }
   throw new Error(`unsupported bridge auth value type: ${typeof value}`);
@@ -130,6 +134,17 @@ export function signBridgeEnvelope(credential: PairingCredential, envelope: unkn
     pairingId: credential.pairingId,
     generation: credential.generation,
     mac: macFor(verifier, envelope).toString("hex"),
+  };
+}
+
+export function signBridgeEnvelopeWithRecord(record: PairingRecord, envelope: unknown): BridgeAuth {
+  if (record.status !== "active" || !/^[a-f0-9]{64}$/i.test(record.secretHash)) {
+    throw new Error("cannot sign with inactive pairing record");
+  }
+  return {
+    pairingId: record.pairingId,
+    generation: record.generation,
+    mac: macFor(Buffer.from(record.secretHash, "hex"), envelope).toString("hex"),
   };
 }
 
