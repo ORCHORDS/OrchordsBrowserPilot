@@ -10,7 +10,7 @@ async function text(relative: string): Promise<string> {
   return readFile(path.join(root, relative), "utf8");
 }
 
-test("MV3 extension selects persistent Native Messaging as the local bridge default (#123)", async () => {
+test("MV3 extension selects persistent authenticated Native Messaging as the local bridge default (#123)", async () => {
   const manifest = JSON.parse(await text("extension/manifest.json")) as {
     permissions?: string[];
   };
@@ -23,6 +23,9 @@ test("MV3 extension selects persistent Native Messaging as the local bridge defa
     /chrome\.runtime\.connectNative\(NATIVE_HOST\)/,
     "service worker must use a persistent native messaging port",
   );
+  assert.match(worker, /AuthenticatedBridgeClient/, "paired bridge responses must use the authenticated bridge client");
+  assert.match(worker, /bridgeClient\.handleMessage\(message\)/, "normal host responses must be authenticated before acceptance");
+  assert.match(worker, /bridgeClient\?\.disconnect/, "native disconnect must reject pending authenticated requests");
   assert.match(worker, /\.onMessage\.addListener\(/, "native port messages must be handled");
   assert.match(worker, /\.onDisconnect\.addListener\(/, "native port disconnects must be handled explicitly");
   assert.doesNotMatch(worker, /https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])/i, "no unauthenticated localhost fallback");

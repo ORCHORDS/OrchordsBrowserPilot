@@ -3,6 +3,7 @@ import {
   createBridgeEnvelope,
   validateBridgeEnvelope,
 } from "./bridge-protocol.js";
+import { AuthenticatedBridgeClient } from "./bridge-client.js";
 import {
   acceptPairingResponse,
   createPairingHelloPayload,
@@ -14,6 +15,7 @@ const NATIVE_HOST = "com.orchords.web_pilot";
 const REPLAY_STORAGE_KEY = "nativeBridgeReplayKeys";
 
 let nativePort = null;
+let bridgeClient = null;
 let replayWindow = new ReplayWindow();
 let pairingState;
 
@@ -44,12 +46,21 @@ async function handleNativeMessage(message) {
     return;
   }
 
-  await rememberBridgeEnvelope(message);
   if (message.type === "bridge.paired" || message.type === "bridge.ready") {
     await pairingReady;
     pairingState = await acceptPairingResponse(chrome.storage.local, pairingState, message);
+    if (!pairingState.pairing) throw new Error("native bridge pairing credential missing after handshake");
+    bridgeClient?.disconnect("native bridge pairing replaced");
+    bridgeClient = new AuthenticatedBridgeClient(nativePort, pairingState.pairing);
+    await rememberBridgeEnvelope(message);
     logLifecycle(message.type === "bridge.paired" ? "native bridge paired" : "native bridge ready");
+    return;
   }
+
+  if (!bridgeClient) throw new Error("authenticated native bridge response arrived before pairing");
+  const handled = await bridgeClient.handleMessage(message);
+  if (!handled) throw new Error(`unexpected authenticated native bridge response type: ${String(message?.type ?? "unknown")}`);
+  await rememberBridgeEnvelope(message);
 }
 
 function connectNativeBridge() {
@@ -60,7 +71,7 @@ function connectNativeBridge() {
 
   port.onMessage.addListener((message) => {
     void handleNativeMessage(message).catch((error) => {
-      const detail = error instanceof Error ? error.message : String(error);
+      const detail = error instanceof Error ? String(error.message) : String(error);
       console.warn(`[${PRODUCT}] rejected native bridge response: ${detail}`);
     });
   });
@@ -68,6 +79,8 @@ function connectNativeBridge() {
   port.onDisconnect.addListener(() => {
     nativePort = null;
     const reason = chrome.runtime.lastError?.message;
+    bridgeClient?.disconnect(reason ?? "native bridge disconnected");
+    bridgeClient = null;
     if (reason) {
       console.warn(`[${PRODUCT}] native bridge disconnected: ${reason}`);
     } else {
@@ -80,7 +93,7 @@ function connectNativeBridge() {
       port.postMessage(createBridgeEnvelope("bridge.hello", createPairingHelloPayload(state)));
     })
     .catch((error) => {
-      const detail = error instanceof Error ? error.message : String(error);
+      const detail = error instanceof Error ? String(error.message) : String(error);
       console.warn(`[${PRODUCT}] native bridge pairing state unavailable: ${detail}`);
       port.disconnect();
     });
