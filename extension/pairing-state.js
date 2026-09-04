@@ -1,3 +1,5 @@
+import { verifyBridgeEnvelopeAuth } from "./bridge-auth.js";
+
 const STORAGE_KEY = "orchordsNativeBridgePairing";
 
 function defaultInstallId() {
@@ -23,6 +25,17 @@ function isPairing(value) {
   );
 }
 
+function splitAuthenticatedMessage(message) {
+  if (!message || typeof message !== "object" || Array.isArray(message)) {
+    throw new Error("invalid native pairing response");
+  }
+  const { auth, ...envelope } = message;
+  if (!auth || typeof auth !== "object" || Array.isArray(auth)) {
+    throw new Error("native pairing response is unauthenticated");
+  }
+  return { auth, envelope };
+}
+
 export async function loadOrCreatePairingState(storageArea, createInstallId = defaultInstallId) {
   const stored = await storageArea.get(STORAGE_KEY);
   const candidate = stored?.[STORAGE_KEY];
@@ -46,28 +59,35 @@ export function createPairingHelloPayload(state) {
 }
 
 export async function acceptPairingResponse(storageArea, state, message) {
-  if (!message || typeof message !== "object" || !message.payload || typeof message.payload !== "object") {
+  const { auth, envelope } = splitAuthenticatedMessage(message);
+  if (!envelope.payload || typeof envelope.payload !== "object" || Array.isArray(envelope.payload)) {
     throw new Error("invalid native pairing response");
   }
-  const payload = message.payload;
+  const payload = envelope.payload;
   if (payload.installId !== state.installId) throw new Error("native pairing response install id mismatch");
 
-  if (message.type === "bridge.paired") {
+  if (envelope.type === "bridge.paired") {
     const pairing = {
       pairingId: payload.pairingId,
       secret: payload.secret,
       generation: payload.generation,
     };
     if (!isPairing(pairing)) throw new Error("invalid native pairing credential");
+    if (!(await verifyBridgeEnvelopeAuth(pairing, envelope, auth))) {
+      throw new Error("native pairing response authentication failed");
+    }
     const next = { installId: state.installId, pairing };
     await storageArea.set({ [STORAGE_KEY]: next });
     return next;
   }
 
-  if (message.type === "bridge.ready") {
+  if (envelope.type === "bridge.ready") {
     if (!state.pairing) throw new Error("native bridge resumed without a local pairing credential");
     if (payload.pairingId !== state.pairing.pairingId || payload.generation !== state.pairing.generation) {
       throw new Error("native bridge pairing generation mismatch");
+    }
+    if (!(await verifyBridgeEnvelopeAuth(state.pairing, envelope, auth))) {
+      throw new Error("native bridge ready authentication failed");
     }
     return state;
   }
