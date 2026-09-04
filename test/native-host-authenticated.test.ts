@@ -7,7 +7,12 @@ import test from "node:test";
 
 import { NativeMessageDecoder, encodeNativeMessage } from "../src/native-messaging.js";
 import { runNativeHost, type NativeToolCaller } from "../src/native-host.js";
-import { createPairing, signBridgeEnvelope, verifyBridgeEnvelopeAuth } from "../src/native-pairing.js";
+import {
+  createPairing,
+  rotatePairing,
+  signBridgeEnvelope,
+  verifyBridgeEnvelopeAuth,
+} from "../src/native-pairing.js";
 import { savePairingState } from "../src/native-pairing-store.js";
 
 const origin = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/";
@@ -185,4 +190,72 @@ test("signed cancellation aborts an in-flight native bridge request (#123)", asy
   assert.equal(aborted, true);
   const cancelled = output.find(message => message.type === "bridge.cancelled");
   assert.ok(cancelled);
+});
+
+test("stale pre-rotation credential cannot dispatch after pairing generation advances (#123)", async () => {
+  const f = await fixture();
+  const rotated = rotatePairing(f.record, {
+    now: () => 750,
+    randomBytes: (size: number) => Buffer.alloc(size, 0x4b),
+  });
+  await savePairingState(f.pairingFile, { version: 1, records: [rotated.record] });
+  let calls = 0;
+  const request = makeEnvelope(
+    "55555555-5555-4555-8555-555555555555",
+    "1",
+    "bridge.request",
+    { tool: "browser_console", arguments: {} },
+  );
+  const stale = { ...request, auth: signBridgeEnvelope(f.credential, request) };
+  await assert.rejects(
+    () => runMessages({
+      pairingFile: f.pairingFile,
+      replayFile: f.replayFile,
+      messages: [stale],
+      toolCaller: { async callTool() { calls += 1; return { ok: true }; } },
+    }),
+    /authentication failed/i,
+  );
+  assert.equal(calls, 0);
+});
+
+test("malformed or unauthenticated bridge request never reaches canonical dispatch (#123)", async () => {
+  const f = await fixture();
+  let calls = 0;
+  const request = makeEnvelope(
+    "66666666-6666-4666-8666-666666666666",
+    "2",
+    "bridge.request",
+    { tool: "browser_console", arguments: {} },
+  );
+  await assert.rejects(
+    () => runMessages({
+      pairingFile: f.pairingFile,
+      replayFile: f.replayFile,
+      messages: [request],
+      toolCaller: { async callTool() { calls += 1; return { ok: true }; } },
+    }),
+    /auth is missing/i,
+  );
+  assert.equal(calls, 0);
+});
+
+test("unapproved native caller origin is rejected before pairing state or dispatch (#123)", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const errors = new PassThrough();
+  await assert.rejects(
+    runNativeHost({
+      callerOrigin: "chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/",
+      allowedOrigins: [origin],
+      profileId,
+      pairingFile: "/unused/pairings.json",
+      replayFile: "/unused/replay.json",
+      input,
+      output,
+      errors,
+      toolCaller: { async callTool() { throw new Error("must not dispatch"); } },
+    }),
+    /caller origin is not allowed/i,
+  );
 });
