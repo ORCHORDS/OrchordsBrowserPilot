@@ -7,7 +7,7 @@ const threatModel = new URL("../docs/security/threat-model.md", import.meta.url)
 test("local Native Messaging threat boundary is explicit and release-gated (#91, #123)", async () => {
   const text = await readFile(threatModel, "utf8");
   assert.match(text, /EXT-NM-LOCAL-001/);
-  assert.match(text, /Native Messaging is not a secure communication channel/i);
+  assert.match(text, /Native Messaging as not being a secure communication channel/i);
   assert.match(text, /same OS user\/profile/i);
   assert.match(text, /local-user compromise/i);
   assert.match(text, /MUST NOT claim resistance/i);
