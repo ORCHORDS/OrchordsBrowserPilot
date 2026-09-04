@@ -24,7 +24,7 @@ test("native bridge tool calls traverse the same MCP buildServer queue/policy pa
     assert.equal(session.ops.stats().completed, before + 1);
     const block = result.content[0];
     assert.equal(block?.type, "text");
-    if (block?.type === "text") assert.equal(block.text, "[]");
+    if (block?.type === "text") assert.equal(block.text, "{\"messages\":[]}");
   } finally {
     await bridge.close();
     await session.dispose();
