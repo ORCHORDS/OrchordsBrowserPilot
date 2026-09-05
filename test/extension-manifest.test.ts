@@ -36,8 +36,13 @@ test("extension foundation is a permission-minimal Manifest V3 package", async (
   const permissions = manifest.permissions ?? [];
   assert.deepEqual(
     permissions,
-    ["activeTab", "nativeMessaging", "storage"],
-    "extension may request temporary tab access, the local native bridge, and restart-safe extension storage only",
+    ["activeTab", "alarms", "nativeMessaging", "storage"],
+    "extension may request temporary tab access, MV3 wake/reconnect alarms, the local native bridge, and restart-safe extension storage only",
+  );
+  assert.equal(
+    permissions.includes("alarms"),
+    true,
+    "service-worker lifecycle uses chrome.alarms and Chrome requires the alarms manifest permission",
   );
   for (const permission of ["debugger", "scripting", "tabs", "webRequest"]) {
     assert.equal(permissions.includes(permission), false, `extension must not request ${permission}`);
@@ -51,7 +56,7 @@ test("extension foundation is a permission-minimal Manifest V3 package", async (
   assert.equal(/https?:\/\//.test(extensionCsp), false);
 
   // #125 — visible control-state popup is served from extension_pages, no
-  // new permission, no remote origin, no inline scripts.
+  // new host permission, no remote origin, no inline scripts.
   assert.equal(manifest.action?.default_popup, "popup.html");
   await access(path.join(repoRoot, "extension", "popup.html"));
   const popupHtml = await readFile(path.join(repoRoot, "extension", "popup.html"), "utf8");
