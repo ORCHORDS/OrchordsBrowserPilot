@@ -6,3 +6,4 @@ export * from "./audit.js";
 export * from "./gate.js";
 export * from "./summary.js";
 export * from "./tools.js";
+export * from "./decision.js";

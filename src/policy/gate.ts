@@ -5,6 +5,11 @@ import { ENVELOPE_VERSION, type ProposedActionEnvelope, type RiskClass } from ".
 import { digestEnvelope } from "./digest.js";
 import { classifyRisk } from "./risk.js";
 import { ApprovalStore, type ApprovalRecord } from "./approval.js";
+import {
+  PolicyDecisionEngine,
+  type PolicyDecision,
+  type PolicyInputs,
+} from "./decision.js";
 
 /**
  * Snapshot of the live page state used to build a dispatch-time envelope
@@ -114,11 +119,34 @@ export const DEFAULT_POLICY: GatePolicy = {
  *     is permitted.
  */
 export class ActionGate {
+  private readonly decisionEngine: PolicyDecisionEngine;
+
   constructor(
     private readonly approvals: ApprovalStore,
     private readonly audit: AuditSink,
     private readonly policy: GatePolicy = DEFAULT_POLICY,
-  ) {}
+    decisionEngine?: PolicyDecisionEngine,
+  ) {
+    this.decisionEngine = decisionEngine ?? new PolicyDecisionEngine();
+  }
+
+  /**
+   * Consult the versioned policy decision engine. The gate's GatePolicy
+   * is the *baseline* (read = allow, mutate = allow, sensitive/irreversible
+   * = approval). The engine layers auth + egress + capability + dataflow
+   * controls on top, so e.g. an irreversible action with no
+   * `capability:irreversible` scope refuses BEFORE the approval row is
+   * minted. Returns the full decision so callers can include it in the
+   * audit context.
+   */
+  decide(inputs: PolicyInputs): PolicyDecision {
+    return this.decisionEngine.decide(inputs);
+  }
+
+  /** Engine version the gate is currently using (audit-friendly). */
+  policyVersion(): number {
+    return this.decisionEngine.policyVersion;
+  }
 
   /**
    * Classify a proposed action. Returns the envelope + digest + risk +
