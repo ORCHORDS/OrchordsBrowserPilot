@@ -50,6 +50,15 @@ const matrix: ReadonlyArray<MatrixEntry> = [
     keywords: ["assert"],
   },
   {
+    relPath: "test/extension-control-state.test.ts",
+    keywords: [
+      "control-state enumerates the seven states",
+      "takeover invalidates every stale approval",
+      "popup.html, popup.js and popup.css exist and contain the user-action surface",
+      "service-worker routes user-action messages through control-state",
+    ],
+  },
+  {
     relPath: "test/native-host-authenticated.test.ts",
     keywords: ["assert"],
   },
@@ -71,7 +80,18 @@ const matrix: ReadonlyArray<MatrixEntry> = [
   },
   {
     relPath: "docs/security/extension-privileged-apis.md",
-    keywords: ["Forbidden list", "bridge-client.js", "service-worker.js", "pairing-state.js", "bridge-protocol.js", "bridge-auth.js"],
+    keywords: [
+      "Forbidden list",
+      "bridge-client.js",
+      "service-worker.js",
+      "pairing-state.js",
+      "bridge-protocol.js",
+      "bridge-auth.js",
+      "control-state.js",
+      "popup.html",
+      "popup.js",
+      "popup.css",
+    ],
   },
 ];
 
@@ -99,8 +119,12 @@ test("privileged-API inventory enumerates every in-scope extension file (#137)",
     "bridge-protocol.js",
     "bridge-auth.js",
     "pairing-state.js",
+    "control-state.js",
     "service-worker.js",
     "manifest.json",
+    "popup.html",
+    "popup.js",
+    "popup.css",
   ]) {
     assert.ok(
       inventory.includes(file),

@@ -10,7 +10,8 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Orchords Web Pilot"
+    "default_title": "Orchords Web Pilot",
+    "default_popup": "popup.html"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self';"

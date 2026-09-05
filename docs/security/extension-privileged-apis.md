@@ -64,13 +64,19 @@ violation.
 
 ### `chrome.action`
 
-- Allowed call site: `extension/service-worker.js` only.
-- Permitted use: surface the toolbar button (`default_title` is already set
-  in `extension/manifest.json`). The action MAY open a future side panel;
-  until then it MUST NOT call `chrome.tabs.executeScript`,
-  `chrome.scripting.executeScript`, or `chrome.tabs.query` with host
+- Allowed call sites: `extension/service-worker.js` and the popup files
+  (`extension/popup.html` / `extension/popup.js`) that the manifest
+  attaches via `action.default_popup`.
+- Permitted use: surface the toolbar button (`default_title` is set in
+  `extension/manifest.json`), render a visible control-state badge via
+  `chrome.action.setBadgeText` / `chrome.action.setBadgeBackgroundColor`,
+  and open the canonical control-state popup (`default_popup: popup.html`).
+  The popup files MUST only run inside the extension_pages CSP and MUST
+  NOT inject content scripts or call `chrome.tabs.executeScript`,
+  `chrome.scripting.executeScript`, or `chrome.tabs.query` against host
   content.
-- Bound by: `#131`, `#124` (when the side panel lands).
+- Bound by: `#125` (visible control-state UI), `#131`, `#124` (when the
+  side panel lands).
 
 ## Forbidden list
 
@@ -117,12 +123,30 @@ document itself; the scan therefore ignores this file
 
 - `extension/service-worker.js`: `chrome.runtime.onMessage`,
   `chrome.runtime.onConnect`, `chrome.runtime.connectNative` (via the
-  bridge client module), `chrome.storage.local` (via the pairing state
-  module), `chrome.action` (toolbar registration only).
+  bridge client module), `chrome.runtime.sendMessage` (broadcasts control
+  state to the popup), `chrome.storage.local` (via the pairing state
+  module), `chrome.storage.session` (control-state snapshot + replay
+  nonces), `chrome.action` (toolbar + badge text/background color for
+  the visible control-state indicator introduced by `#125`).
 - `extension/bridge-client.js`: `chrome.runtime.connectNative` exclusively.
 - `extension/bridge-protocol.js`: no privileged API; pure encoding/HMAC.
 - `extension/bridge-auth.js`: no privileged API; pure HMAC computation.
 - `extension/pairing-state.js`: `chrome.storage.local` exclusively.
+- `extension/control-state.js`: no privileged API; pure state machine +
+  audit log + approval-invalidation set. All persistence is delegated to
+  the service worker; the popup renders via `chrome.action.setBadge*` and
+  via the messages returned to it from the service worker.
+- `extension/popup.html`: declarative markup; no privileged API. Served
+  from `extension_pages` CSP (`script-src 'self'; object-src 'self'`) and
+  declares its own restrictive CSP meta tag (`default-src 'self'; no
+  remote, no inline, no eval`). Referenced from `manifest.action.default_popup`.
+- `extension/popup.js`: `chrome.runtime.sendMessage` (to dispatch
+  user-action messages back to the service worker) and
+  `chrome.runtime.onMessage` (to receive control-state updates from the
+  service worker). Page content never writes to this file.
+- `extension/popup.css`: bundled stylesheet served from extension_pages
+  CSP. Contains the per-state colour mapping used by the badge/header in
+  the popup.
 - `extension/manifest.json`: no privileged API; declarative configuration
   only. Subject to the manifest pinning in `test/extension-manifest.test.ts`.
 
@@ -150,6 +174,11 @@ next `npm test` invocation.
 
 - `#131` — extension manifest/permission security (this document).
 - `#123` — extension↔core authenticated bridge controls.
+- `#125` — visible agent-control state, pause/stop/takeover UI and
+  stale-approval invalidation (`extension/control-state.js`,
+  `extension/popup.html`, `extension/popup.js`, `extension/popup.css`,
+  the badge text/background color in `extension/service-worker.js`, and
+  the regression coverage in `test/extension-control-state.test.ts`).
 - `#137` — extension security regression coverage (matrix in
   `test/extension-security-matrix.test.ts`).
 - `#91` — cross-product threat model / release-assurance policy

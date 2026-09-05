@@ -14,6 +14,7 @@ test("extension foundation is a permission-minimal Manifest V3 package", async (
     name?: string;
     version?: string;
     background?: { service_worker?: string; type?: string };
+    action?: { default_title?: string; default_popup?: string };
     permissions?: string[];
     host_permissions?: string[];
     externally_connectable?: unknown;
@@ -48,4 +49,16 @@ test("extension foundation is a permission-minimal Manifest V3 package", async (
   assert.equal(extensionCsp.includes("'unsafe-eval'"), false);
   assert.equal(extensionCsp.includes("'unsafe-inline'"), false);
   assert.equal(/https?:\/\//.test(extensionCsp), false);
+
+  // #125 — visible control-state popup is served from extension_pages, no
+  // new permission, no remote origin, no inline scripts.
+  assert.equal(manifest.action?.default_popup, "popup.html");
+  await access(path.join(repoRoot, "extension", "popup.html"));
+  const popupHtml = await readFile(path.join(repoRoot, "extension", "popup.html"), "utf8");
+  const popupCsp = /<meta[^>]+content=["']default-src 'self'[^>]*>/i.exec(popupHtml)?.[0] ?? "";
+  assert.ok(popupCsp, "popup.html must declare its own CSP meta tag");
+  assert.equal(/'unsafe-eval'/.test(popupCsp), false);
+  assert.equal(/'unsafe-inline'/.test(popupCsp), false);
+  assert.equal(/https?:\/\//.test(popupCsp), false);
+  assert.match(popupHtml, /<script type="module" src="popup\.js">/);
 });

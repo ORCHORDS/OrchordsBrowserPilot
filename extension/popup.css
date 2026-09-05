@@ -1,0 +1,102 @@
+/* Extension popup stylesheet (#125). Bundled with the extension, served from
+   extension_pages CSP ('self'). No remote resources, no inline scripts, no
+   third-party fonts. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #5a5a5a;
+  --line: #d6d6d6;
+  --accent: #1f5fa8;
+  --danger: #a01010;
+  --warn: #8a5a00;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a1a;
+    --fg: #f0f0f0;
+    --muted: #b0b0b0;
+    --line: #3a3a3a;
+    --accent: #6aa8ff;
+    --danger: #ff7070;
+    --warn: #ffb060;
+  }
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  min-width: 360px;
+}
+
+main {
+  padding: 16px;
+}
+
+header h1 {
+  font-size: 14px;
+  margin: 0 0 4px 0;
+  font-weight: 600;
+}
+
+#state-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+#state-label {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+#state-monotonic {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+#state-line[data-state="disconnected"]  #state-label { color: var(--muted); }
+#state-line[data-state="connected-idle"] #state-label { color: #1f8a3b; }
+#state-line[data-state="observing"]      #state-label { color: var(--accent); }
+#state-line[data-state="controlling"]    #state-label { color: #b35900; }
+#state-line[data-state="approval-required"] #state-label { color: var(--warn); }
+#state-line[data-state="human-control"]  #state-label { color: #6a1b9a; }
+#state-line[data-state="error"]          #state-label { color: var(--danger); }
+
+section { margin: 12px 0; }
+section h2 { font-size: 12px; margin: 0 0 6px 0; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+#approval-summary dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 8px; margin: 0; font-size: 12px; }
+#approval-summary dt { color: var(--muted); }
+#approval-summary dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+#approval-envelope {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  margin: 6px 0 0 0;
+  word-break: break-all;
+}
+
+#audit-list { list-style: none; padding: 0; margin: 0; max-height: 140px; overflow: auto; }
+#audit-list li { font-size: 11px; color: var(--muted); padding: 2px 0; border-bottom: 1px solid var(--line); }
+#audit-list li:last-child { border-bottom: none; }
+#audit-list li[data-actor="user"] { color: var(--fg); }
+
+nav { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 12px; }
+button { font-size: 12px; padding: 6px 8px; cursor: pointer; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button#action-stop:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+button#action-takeover:not(:disabled) { color: #6a1b9a; border-color: #6a1b9a; }
+
+footer { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+footer p { margin: 0; font-size: 10px; color: var(--muted); }

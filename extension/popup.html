@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Orchords Web Pilot</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; object-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none';" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main id="root">
+      <header>
+        <h1>Orchords Web Pilot</h1>
+        <p id="state-line" data-state="disconnected">
+          <span id="state-label">Disconnected</span>
+          <span id="state-monotonic" aria-hidden="true"></span>
+        </p>
+      </header>
+      <section id="approval-summary" hidden>
+        <h2>Approval required</h2>
+        <dl>
+          <dt>Tool</dt>
+          <dd id="approval-tool">—</dd>
+          <dt>Origin</dt>
+          <dd id="approval-origin">—</dd>
+          <dt>Risk</dt>
+          <dd id="approval-risk">—</dd>
+        </dl>
+        <p id="approval-envelope"></p>
+      </section>
+      <section id="audit">
+        <h2>Recent activity</h2>
+        <ol id="audit-list" aria-live="polite"></ol>
+      </section>
+      <nav id="actions">
+        <button type="button" id="action-pause" disabled>Pause</button>
+        <button type="button" id="action-stop" disabled>Stop session</button>
+        <button type="button" id="action-disconnect" disabled>Disconnect</button>
+        <button type="button" id="action-takeover" disabled>Human takeover</button>
+        <button type="button" id="action-resume" disabled>Resume</button>
+        <button type="button" id="action-approve" hidden>Approve</button>
+        <button type="button" id="action-deny" hidden>Deny</button>
+      </nav>
+      <footer>
+        <p id="footer-note">Page content cannot spoof or hide this indicator.</p>
+      </footer>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

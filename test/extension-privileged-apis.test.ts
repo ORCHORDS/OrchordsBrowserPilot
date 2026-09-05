@@ -69,7 +69,11 @@ test("privileged-API inventory doc pins the canonical forbidden list (#131)", as
     "bridge-protocol.js",
     "bridge-auth.js",
     "pairing-state.js",
+    "control-state.js",
     "manifest.json",
+    "popup.html",
+    "popup.js",
+    "popup.css",
   ]) {
     assert.ok(
       text.includes(file),
@@ -81,10 +85,12 @@ test("privileged-API inventory doc pins the canonical forbidden list (#131)", as
   assert.match(text, /test\/extension-privileged-apis\.test\.ts/);
   assert.match(text, /test\/extension-manifest\.test\.ts/);
   assert.match(text, /test\/extension-security-matrix\.test\.ts/);
+  assert.match(text, /test\/extension-control-state\.test\.ts/);
 
   // The inventory must declare its owner.
   assert.match(text, /#131/);
   assert.match(text, /#123/);
+  assert.match(text, /#125/);
   assert.match(text, /#137/);
 });
 
