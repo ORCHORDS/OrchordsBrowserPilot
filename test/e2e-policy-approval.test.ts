@@ -163,6 +163,22 @@ describe("E2E policy approvals + queued TOCTOU (#81/#104)", () => {
     });
   }
 
+  function approvedCall(
+    tool: string,
+    args: Record<string, unknown>,
+    proposal: Proposal,
+    approval: Approval,
+  ): { id: number; response: Promise<JsonRpcResponse> } {
+    return client.send("tools/call", {
+      name: tool,
+      arguments: {
+        ...args,
+        _proposalId: proposal.proposalId,
+        _approval: approval.approvalId,
+      },
+    });
+  }
+
   it("permits an unchanged approved sensitive action through the real enforce-mode transport", async () => {
     const args = { expression: "1 + 1" };
     const proposal = await propose("browser_evaluate", args);
@@ -175,7 +191,7 @@ describe("E2E policy approvals + queued TOCTOU (#81/#104)", () => {
     assert.equal(parseJson<{ result: number }>(dispatched).result, 2);
   });
 
-  it("invalidates an approved action when live page state drifts while it waits in the session queue", async () => {
+  it("invalidates an approved action when live page state drifts while it waits in the mutating queue", async () => {
     // Use a normal about:blank document for the drift fixture. `data:` URLs
     // are opaque/nonstandard top-level URLs and are a poor same-document
     // navigation fixture. A fragment update on about:blank is an ordinary
@@ -203,26 +219,37 @@ describe("E2E policy approvals + queued TOCTOU (#81/#104)", () => {
     );
     assert.equal(scheduled.isError, false, scheduled.text);
 
-    // Occupy the single session slot with a read-only wait. The already-
-    // approved target is submitted while that wait owns the slot, so the
-    // page-side timer changes the URL after approval but before target gate.
-    const waitCall = client.send("tools/call", {
-      name: "browser_wait",
-      arguments: { time: 0.6 },
-    });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    const targetCall = client.send("tools/call", {
-      name: "browser_evaluate",
-      arguments: {
-        ...targetArgs,
-        _proposalId: targetProposal.proposalId,
-        _approval: targetApproval.approvalId,
-      },
-    });
+    // browser_wait is intentionally read-only after #104 AC 4, so it cannot
+    // hold the mutating lane. Use a separately approved delayed evaluation as
+    // the deterministic queue blocker. Playwright waits for the returned
+    // Promise, keeping the mutating lane occupied while the page-side timer
+    // changes the URL after target approval but before target dispatch.
+    const blockerArgs = {
+      expression: "new Promise((resolve) => setTimeout(() => resolve('blocker-complete'), 600))",
+    };
+    const blockerProposal = await propose("browser_evaluate", blockerArgs);
+    const blockerApproval = await approve(blockerProposal);
+    const blockerCall = approvedCall(
+      "browser_evaluate",
+      blockerArgs,
+      blockerProposal,
+      blockerApproval,
+    );
 
-    const [waitRpc, targetRpc] = await Promise.all([waitCall.response, targetCall.response]);
-    assert.equal(waitRpc.error, undefined, JSON.stringify(waitRpc));
-    assert.notEqual(waitRpc.result?.isError, true, JSON.stringify(waitRpc));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const targetCall = approvedCall(
+      "browser_evaluate",
+      targetArgs,
+      targetProposal,
+      targetApproval,
+    );
+
+    const [blockerRpc, targetRpc] = await Promise.all([
+      blockerCall.response,
+      targetCall.response,
+    ]);
+    assert.equal(blockerRpc.error, undefined, JSON.stringify(blockerRpc));
+    assert.notEqual(blockerRpc.result?.isError, true, JSON.stringify(blockerRpc));
     assert.equal(targetRpc.error, undefined, JSON.stringify(targetRpc));
     assert.equal(targetRpc.result?.isError, true, JSON.stringify(targetRpc));
     const blockedText = targetRpc.result?.content?.[0]?.text ?? "";

@@ -6,13 +6,13 @@
  *      complete in roughly the time of a single call (parallel), not
  *      2× (serial). This is the integration proof that the queue's lane
  *      split is plumbed through CallToolRequestSchema in src/server.ts.
- *   2. A mutating op (browser_wait) queued ahead of a read-only op
- *      blocks the read-only op until it drains — the FIFO still applies.
- *   3. Two mutating ops on the same session still serialize.
+ *   2. A mutating delayed `browser_evaluate` queued ahead of a read-only
+ *      `browser_console` blocks the read-only call until the mutation drains.
+ *   3. Several read-only calls below the default concurrency cap all dispatch
+ *      successfully through the wire path.
  *
- * The fixture mirrors test/e2e-operation-serialization.test.ts so the
- * parallelism assertions are directly comparable to the existing AC 1
- * serialization assertions.
+ * The hard read-only capacity boundary itself is covered deterministically in
+ * test/operation-queue-readonly.test.ts. This E2E file verifies the MCP wiring.
  */
 
 import { describe, it, before, after } from "node:test";
@@ -105,20 +105,10 @@ describe("E2E read-only concurrency split (P1 #104 AC 4)", () => {
   });
 
   it("two concurrent browser_console calls complete in roughly one call's time", async () => {
-    // browser_console is a purely-in-process read against session.diagnostics.
-    // A round-trip through the stdio transport is dominated by JSON parsing
-    // and tty machinery — we measure relative to a serial baseline below.
-    //
-    // Serial baseline: one console call's wall-clock (this is the realistic
-    // minimum a single in-flight op can achieve, including stdio framing).
     const baselineStart = Date.now();
     await client.sendCallTool("browser_console", { level: "log", limit: 10 });
-    const baseline = Date.now() - baselineStart;
+    const baseline = Math.max(1, Date.now() - baselineStart);
 
-    // Two parallel calls. If the lane split were inactive, they would
-    // serialize behind the single mutating slot — the second would only
-    // start after the first completed (≥ 2 × baseline). With the split,
-    // they share the read-only lane and finish in roughly one baseline.
     const t0 = Date.now();
     const [a, b] = await Promise.all([
       client.sendCallTool("browser_console", { level: "log", limit: 10 }),
@@ -129,10 +119,6 @@ describe("E2E read-only concurrency split (P1 #104 AC 4)", () => {
     assert.notEqual(a.result?.isError, true, `first: ${JSON.stringify(a)}`);
     assert.notEqual(b.result?.isError, true, `second: ${JSON.stringify(b)}`);
 
-    // Hard upper bound: parallel pair must be strictly less than 1.8× a
-    // single call. 1.8 leaves scheduler slack for CI noise while still
-    // catching a regression that drops the pair back into the mutating
-    // lane (which would land at >= 2×).
     assert.ok(
       elapsed < baseline * 1.8,
       `parallel pair (${elapsed}ms) should be < 1.8× single baseline (${baseline}ms)`,
@@ -140,15 +126,12 @@ describe("E2E read-only concurrency split (P1 #104 AC 4)", () => {
   });
 
   it("mutating op queued ahead blocks a subsequent read-only op until it drains", async () => {
-    // Hold the mutating slot with browser_wait(1.5s), then queue a
-    // browser_console. The console op must not start until browser_wait
-    // has returned — the FIFO still gates lane assignment.
-    const waitTime = 1.5;
+    const delayMs = 1_500;
 
     const t0 = Date.now();
-    const first = client.sendCallTool("browser_wait", { time: waitTime });
-    // Tiny gap so the mutating op is definitely on the wire before the
-    // read-only op is sent — keeps the FIFO ordering unambiguous.
+    const first = client.sendCallTool("browser_evaluate", {
+      expression: `new Promise((resolve) => setTimeout(() => resolve('done'), ${delayMs}))`,
+    });
     await new Promise((r) => setTimeout(r, 50));
     const second = client.sendCallTool("browser_console", { level: "log", limit: 10 });
 
@@ -157,28 +140,16 @@ describe("E2E read-only concurrency split (P1 #104 AC 4)", () => {
 
     assert.notEqual(firstRes.result?.isError, true, `first: ${JSON.stringify(firstRes)}`);
     assert.notEqual(secondRes.result?.isError, true, `second: ${JSON.stringify(secondRes)}`);
-
-    // Total must be at least waitTime (the mutating op actually ran).
-    // The read-only op fires AFTER waitTime, but its wall-clock contribution
-    // is small (~baseline). The bound we assert is that the mutating op
-    // was honored in full — not that the read-only op waited an
-    // additional full baseline on top of it. If the read-only op ran
-    // BEFORE the mutating op, the responses would still both succeed but
-    // the audit context would show `lane=readonly` before `lane=mutating`
-    // and `dispatchSequence` would be out of arrival order.
     assert.ok(
-      elapsed >= waitTime * 1000 - 200,
-      `mutating op must run first (>= ${waitTime}s), got ${elapsed}ms`,
+      elapsed >= delayMs - 200,
+      `mutating op must drain before read-only dispatch (>= ${delayMs}ms), got ${elapsed}ms`,
     );
-    // No strong upper bound — node's test runner concurrency stretches
-    // elapsed time without indicating extra queue latency.
   });
 
-  it("read-only lane caps at maxReadonlyConcurrent: 3rd op queues behind the first two", async () => {
-    // Fire three read-only calls back-to-back without awaiting. The queue
-    // has `maxReadonlyConcurrent` defaulting to 4, so all three should
-    // dispatch — but the harness measures *order* by dispatch sequence in
-    // the audit stream. Assert: all three succeeded, no errors.
+  it("multiple read-only calls below the default concurrency cap all dispatch successfully", async () => {
+    // The default read-only cap is four. Three simultaneous calls are below
+    // that cap and should all be accepted by the MCP routing path. Exact cap
+    // enforcement is asserted in the OperationQueue unit suite.
     const results = await Promise.all([
       client.sendCallTool("browser_console", { level: "log", limit: 5 }),
       client.sendCallTool("browser_console", { level: "warn", limit: 5 }),
@@ -187,8 +158,5 @@ describe("E2E read-only concurrency split (P1 #104 AC 4)", () => {
     for (const r of results) {
       assert.notEqual(r.result?.isError, true, `error: ${JSON.stringify(r)}`);
     }
-    // The mutating-lane serialization contract is already proven by
-    // test/e2e-operation-serialization.test.ts; here we focus on the
-    // lane split integration with the wire protocol.
   });
 });

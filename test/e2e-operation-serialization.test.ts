@@ -1,20 +1,15 @@
 /**
  * End-to-end coverage for issue #104 — per-session operation serialization.
  *
- * Spawns the real CLI over stdio, fires two `browser_wait` calls with
- * `time` args on the same session without awaiting the first response,
- * and asserts:
+ * Spawns the real CLI over stdio, fires delayed mutating `browser_evaluate`
+ * calls on the same session without awaiting the first response, and asserts
+ * that they serialize through the single mutating lane. `browser_wait` is
+ * intentionally read-only after the AC 4 lane split, so it must not be used
+ * as a serialization fixture here.
  *
- *   1. The second call's response timestamp is AFTER the first response
- *      timestamp — proving the calls serialized through the queue rather
- *      than running in parallel inside the same Playwright page.
- *   2. The audit log on the in-process server captured the dispatch
- *      lifecycle (queued -> started -> completed) for at least the second
- *      call.
- *
- * This is the integration-level proof that the wire-up works: the queue
- * is plumbed into CallToolRequestSchema and the page state stays
- * consistent across concurrent tool calls.
+ * This is the integration-level proof that the wire-up works: the queue is
+ * plumbed into CallToolRequestSchema and mutating page work cannot overlap
+ * accidentally inside one session/page.
  */
 
 import { describe, it, before, after } from "node:test";
@@ -33,6 +28,12 @@ interface JsonRpcResponse {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const cliPath = path.resolve(__dirname, "../dist/cli.js");
+
+function delayedEvaluate(delayMs: number): { expression: string } {
+  return {
+    expression: `new Promise((resolve) => setTimeout(() => resolve(${delayMs}), ${delayMs}))`,
+  };
+}
 
 class McpClient {
   private proc: ChildProcess;
@@ -78,17 +79,7 @@ class McpClient {
     this.proc.stdin!.write(JSON.stringify({ jsonrpc: "2.0", method }) + "\n");
   }
 
-  async callTool(name: string, args: unknown): Promise<{ text: string; isError: boolean }> {
-    const res = await this.rpc("tools/call", { name, arguments: args });
-    const content = res.result?.content ?? [];
-    return { text: content[0]?.text ?? "", isError: res.result?.isError === true };
-  }
-
-  /**
-   * Send a tools/call without awaiting — returns when the request has
-   * been flushed to the child's stdin. Used to fire two requests back-to-
-   * back before the first response arrives.
-   */
+  /** Fire a tools/call and resolve with the raw response (no awaits between fires). */
   sendCallTool(name: string, args: unknown): Promise<JsonRpcResponse> {
     return this.rpc("tools/call", { name, arguments: args });
   }
@@ -116,50 +107,40 @@ describe("E2E per-session operation serialization (P1 #104)", () => {
     client.kill();
   });
 
-  it("two concurrent waits on the same session serialize (FIFO)", async () => {
-    // Wait long enough that, were the calls running in parallel, the
-    // second response would arrive within ~100ms of the first. With
-    // maxConcurrent=1 the second waits for the first to drain.
-    const waitTime = 1.5;
+  it("two concurrent mutating evaluations on the same session serialize (FIFO)", async () => {
+    const delayMs = 1_500;
 
-    // Fire both without awaiting — the second is enqueued behind the first.
     const t0 = Date.now();
-    const first = client.sendCallTool("browser_wait", { time: waitTime });
-    // Tiny gap so the first request is definitely on the wire before the
-    // second is sent. The gap must remain SMALLER than `waitTime` so the
-    // ordering assertion (below) is meaningful.
+    const first = client.sendCallTool("browser_evaluate", delayedEvaluate(delayMs));
+    // Tiny gap keeps arrival order deterministic while remaining much shorter
+    // than the blocker itself.
     await new Promise((r) => setTimeout(r, 50));
-    const second = client.sendCallTool("browser_wait", { time: waitTime });
+    const second = client.sendCallTool("browser_evaluate", delayedEvaluate(delayMs));
 
     const [firstRes, secondRes] = await Promise.all([first, second]);
-    const t1 = Date.now();
+    const elapsed = Date.now() - t0;
 
     assert.notEqual(firstRes.result?.isError, true, `first: ${JSON.stringify(firstRes)}`);
     assert.notEqual(secondRes.result?.isError, true, `second: ${JSON.stringify(secondRes)}`);
 
-    // Total time must be at least 2 × waitTime (sequential). If the queue
-    // were not wired in and both ran concurrently, this would be ~waitTime.
-    const elapsed = t1 - t0;
+    // Playwright waits for a Promise returned by page.evaluate. Two mutating
+    // evaluations therefore take roughly 2 × delayMs when the single
+    // mutating lane is correctly wired, but roughly delayMs if they overlap.
     assert.ok(
-      elapsed >= waitTime * 2 * 1000 - 200, // 200ms scheduler slack
-      `expected sequential execution (>= ${waitTime * 2}s), got ${elapsed}ms`,
+      elapsed >= delayMs * 2 - 200,
+      `expected sequential execution (>= ${delayMs * 2}ms), got ${elapsed}ms`,
     );
-    // No wall-clock upper bound here. Node's test runner executes test files
-    // concurrently by default, so host/CI contention can stretch elapsed
-    // time without indicating extra queue latency. Bounded queue wait is
-    // exercised deterministically in the dedicated OperationQueue tests.
+    // No wall-clock upper bound: host/CI contention may stretch elapsed time.
   });
 
-  it("rapid-fire concurrent calls all complete in order without errors", async () => {
-    // Five tiny waits fired back-to-back. Each ~0.4s. If serialization
-    // held, total time >= 5 × 0.4s = 2s. If not, total time ~ 0.4s.
-    const N = 5;
-    const perCall = 0.4;
+  it("rapid-fire mutating calls all serialize without errors", async () => {
+    const count = 5;
+    const delayMs = 400;
     const promises: Promise<JsonRpcResponse>[] = [];
-    for (let i = 0; i < N; i++) {
-      promises.push(client.sendCallTool("browser_wait", { time: perCall }));
-    }
     const t0 = Date.now();
+    for (let i = 0; i < count; i++) {
+      promises.push(client.sendCallTool("browser_evaluate", delayedEvaluate(delayMs)));
+    }
     const results = await Promise.all(promises);
     const elapsed = Date.now() - t0;
 
@@ -167,8 +148,8 @@ describe("E2E per-session operation serialization (P1 #104)", () => {
       assert.notEqual(r.result?.isError, true, `error in burst: ${JSON.stringify(r)}`);
     }
     assert.ok(
-      elapsed >= N * perCall * 1000 - 250,
-      `expected sequential execution (>= ${N * perCall}s), got ${elapsed}ms`,
+      elapsed >= count * delayMs - 250,
+      `expected sequential execution (>= ${count * delayMs}ms), got ${elapsed}ms`,
     );
   });
 });
