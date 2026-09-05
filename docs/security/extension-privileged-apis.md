@@ -16,7 +16,9 @@ silent deletion of any individual extension-security test is
 In scope: every entry point in `extension/service-worker.js` (the MV3 service
 worker) and the modules it imports (`bridge-client.js`, `bridge-protocol.js`,
 `bridge-auth.js`, `pairing-state.js`, `tab-attachment.js`,
-`bridge-relay.js`, `content-script.js`, `cdp-adapter.js`).
+`bridge-relay.js`, `content-script.js`, `cdp-adapter.js`,
+`service-worker-lifecycle.js`) plus the side-panel inspector
+(`side-panel.html`, `side-panel.js`, `side-panel.css`).
 
 Out of scope: any future side panel, devtools page, options
 page, or remote/externally connectable surface. Adding any of those requires
@@ -196,6 +198,20 @@ document itself; the scan therefore ignores this file
   product ever talks to, and the adapter is the policy boundary that
   refuses `Browser.*`, `Audits.*`, `Security.*`, and every other CDP
   domain not in `CDP_DOMAIN_ALLOWLIST`.
+- `extension/side-panel.html` / `side-panel.js` / `side-panel.css`
+  (#128): side panel inspector surface, served from extension_pages
+  CSP. The renderer is pure data-in / DOM-out; it never calls a
+  privileged API and only ever writes to the DOM via `textContent`
+  (XSS-safe). The actual `chrome.sidePanel` setOptions call is issued
+  by the service worker (`extension/service-worker.js`) at install
+  time.
+- `extension/service-worker-lifecycle.js` (#130): MV3 suspension /
+  wakeup / reconnect adapter. No privileged API at import time; the
+  optional `registerAlarms()` helper calls `chrome.alarms.create` and
+  `chrome.alarms.onAlarm.addListener` (both allowed by the
+  `chrome.alarms` permission that the extension ships with). The
+  module never calls `chrome.debugger`, `chrome.scripting`,
+  `chrome.tabs.*`, `chrome.cookies.*`, or `chrome.webRequest.*`.
 - `extension/manifest.json`: no privileged API; declarative configuration
   only. Subject to the manifest pinning in `test/extension-manifest.test.ts`.
 
@@ -238,6 +254,11 @@ next `npm test` invocation.
   `test/extension-content-script.test.ts`).
 - `#132` — policy-gated CDP adapter (`extension/cdp-adapter.js` +
   `test/extension-cdp-adapter.test.ts`).
+- `#128` — side-panel session inspector (`extension/side-panel.{html,js,css}`
+  + `test/extension-side-panel.test.ts`).
+- `#130` — MV3 service-worker suspension / wakeup / reconnect
+  (`extension/service-worker-lifecycle.js` +
+  `test/extension-service-worker-lifecycle.test.ts`).
 - `#129` — onboarding, settings, reset-pairing, and connection-doctor
   flow (`extension/onboarding.js`, `extension/settings.js`,
   `extension/connection-doctor.js`, the `reset_pairing` /

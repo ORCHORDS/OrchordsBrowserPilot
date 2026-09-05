@@ -8,6 +8,7 @@ import {
   evaluateCompatibility,
   validateBridgeEnvelope,
 } from "./bridge-protocol.js";
+import { createServiceWorkerLifecycle } from "./service-worker-lifecycle.js";
 import { AuthenticatedBridgeClient } from "./bridge-client.js";
 import {
   acceptPairingResponse,
@@ -51,6 +52,7 @@ let nativePort = null;
 let bridgeClient = null;
 let replayWindow = new ReplayWindow();
 let outboundQueue = new BridgeOutboundQueue();
+let swLifecycle = null;
 let pairingState;
 let controlState = createControlState({ initial: CONTROL_STATES.DISCONNECTED });
 let siteAuthorizations = createSiteAuthorizations();
@@ -68,11 +70,26 @@ function postEnvelope(type, payload, options = {}) {
   if (!result.ok) return result;
   try {
     nativePort.postMessage(envelope);
+    // #130 — track every outbound envelope in session storage so the
+    // service worker can resume after a suspension/wakeup.
+    void swLifecycle?.trackOutbound(envelope);
     return { ok: true, id: envelope.id };
   } catch (error) {
     outboundQueue.drainAll();
     return { ok: false, code: "post_failed", message: error instanceof Error ? error.message : String(error) };
   }
+}
+
+function ensureSwLifecycle() {
+  if (swLifecycle) return swLifecycle;
+  swLifecycle = createServiceWorkerLifecycle({
+    chromeApi: chrome,
+    alarmsApi: chrome.alarms,
+    storageSession: chrome.storage.session,
+    postEnvelope,
+  });
+  swLifecycle.registerAlarms();
+  return swLifecycle;
 }
 
 function logLifecycle(event) {
@@ -329,6 +346,9 @@ function connectNativeBridge() {
       actor: ACTOR.SYSTEM,
       reason: reason ?? "native bridge disconnected",
     });
+    // #130 — schedule a reconnect on a bounded backoff schedule so the
+    // service worker recovers from host restarts without user action.
+    void ensureSwLifecycle().triggerReconnect({ reason: reason ?? "native bridge disconnected" });
     if (reason) {
       console.warn(`[${PRODUCT}] native bridge disconnected: ${reason}`);
     } else {
@@ -357,16 +377,19 @@ function connectNativeBridge() {
 
 chrome.runtime.onInstalled.addListener(() => {
   logLifecycle("installed");
+  ensureSwLifecycle();
   connectNativeBridge();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   logLifecycle("started");
+  ensureSwLifecycle();
   connectNativeBridge();
 });
 
 chrome.action.onClicked.addListener(() => {
   logLifecycle("one-time tab access granted by user gesture");
+  ensureSwLifecycle();
   connectNativeBridge();
 });
 
@@ -507,3 +530,4 @@ chrome.runtime.onMessage.addListener((message, sender, _sendResponse) => {
 });
 
 connectNativeBridge();
+ensureSwLifecycle();
