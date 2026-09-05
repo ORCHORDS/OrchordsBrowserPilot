@@ -141,6 +141,18 @@ document itself; the scan therefore ignores this file
   `extension/service-worker.js` which is the sole writer under
   `chrome.storage.local[orchordsSiteAuthorizations]`. Surface owned by
   `#124`.
+- `extension/settings.js`: no privileged API; pure allow-list-keyed
+  settings store. Persistence lives in `extension/service-worker.js`
+  under `chrome.storage.local[orchordsExtensionSettings]`. Surface
+  owned by `#129`.
+- `extension/onboarding.js`: no privileged API; pure first-run state
+  machine. Persistence lives in `extension/service-worker.js` under
+  `chrome.storage.local[orchordsOnboardingState]`. Surface owned by
+  `#129`.
+- `extension/connection-doctor.js`: no privileged API; pure diagnostic
+  function that classifies manifest, browser, core, pairing, native
+  messaging errors, and unexplained control-state errors. Never
+  includes raw secrets or local paths. Surface owned by `#129`.
 - `extension/popup.html`: declarative markup; no privileged API. Served
   from `extension_pages` CSP (`script-src 'self'; object-src 'self'`) and
   declares its own restrictive CSP meta tag (`default-src 'self'; no
@@ -190,6 +202,14 @@ next `npm test` invocation.
   `extension/popup.html`, `extension/popup.js`, `extension/popup.css`,
   the badge text/background color in `extension/service-worker.js`, and
   the regression coverage in `test/extension-control-state.test.ts`).
+- `#129` — onboarding, settings, reset-pairing, and connection-doctor
+  flow (`extension/onboarding.js`, `extension/settings.js`,
+  `extension/connection-doctor.js`, the `reset_pairing` /
+  `set_settings` / `run_doctor` / `advance_onboarding` /
+  `transition_onboarding` / `reset_onboarding` user-action surface in
+  `extension/service-worker.js` and `extension/popup.js`, and the
+  regression coverage in `test/extension-connection-doctor.test.ts` and
+  `test/extension-settings.test.ts`).
 - `#137` — extension security regression coverage (matrix in
   `test/extension-security-matrix.test.ts`).
 - `#91` — cross-product threat model / release-assurance policy

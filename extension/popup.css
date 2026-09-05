@@ -105,6 +105,34 @@ section h2 { font-size: 12px; margin: 0 0 6px 0; color: var(--muted); text-trans
 #site-grants li { color: #1f8a3b; }
 #site-denials li { color: var(--danger); }
 
+#onboarding[data-stage="ready"] #onboarding-advance { color: #1f8a3b; border-color: #1f8a3b; }
+#onboarding-stages { list-style: none; padding: 0; margin: 4px 0; display: grid; gap: 2px; }
+#onboarding-stages li { font-size: 11px; color: var(--muted); padding: 2px 0; border-bottom: 1px dashed var(--line); }
+#onboarding-stages li[data-done="true"] { color: #1f8a3b; }
+#onboarding-stages li[data-current="true"] { font-weight: 600; color: var(--fg); }
+#onboarding-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+#doctor[data-severity="ok"] { border-left: 4px solid #1f8a3b; padding-left: 6px; }
+#doctor[data-severity="info"] { border-left: 4px solid var(--accent); padding-left: 6px; }
+#doctor[data-severity="warning"] { border-left: 4px solid var(--warn); padding-left: 6px; }
+#doctor[data-severity="error"] { border-left: 4px solid var(--danger); padding-left: 6px; }
+#doctor[data-severity="blocking"] { border-left: 4px solid var(--danger); padding-left: 6px; }
+#doctor-summary { font-size: 11px; margin: 0 0 4px 0; color: var(--muted); }
+#doctor-issues { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+#doctor-issues li { font-size: 11px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; }
+#doctor-issues li[data-severity="blocking"] { border-color: var(--danger); color: var(--danger); }
+#doctor-issues li[data-severity="error"] { border-color: var(--danger); }
+#doctor-issues li[data-severity="warning"] { border-color: var(--warn); }
+#doctor-issues li strong { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; }
+#doctor-issues li p { margin: 2px 0 0 0; font-size: 10px; color: var(--muted); }
+
+#settings p { display: grid; grid-template-columns: max-content 1fr; gap: 6px; align-items: center; margin: 4px 0; }
+#settings p label { font-size: 11px; color: var(--muted); }
+#settings-diagnostics-row { grid-template-columns: 1fr !important; }
+#settings-diagnostics-row label { display: flex; gap: 6px; align-items: center; font-size: 11px; color: var(--fg); }
+#settings-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+button#settings-reset-pairing:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+
 nav { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 12px; }
 button { font-size: 12px; padding: 6px 8px; cursor: pointer; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }

@@ -69,6 +69,25 @@ const matrix: ReadonlyArray<MatrixEntry> = [
     ],
   },
   {
+    relPath: "test/extension-connection-doctor.test.ts",
+    keywords: [
+      "happy path returns ok severity",
+      "doctor never returns raw secrets",
+      "doctor exports its functions",
+    ],
+  },
+  {
+    relPath: "test/extension-settings.test.ts",
+    keywords: [
+      "unknown keys are dropped on clean",
+      "settings key allow-list is exported and frozen",
+      "onboarding stages are canonical and frozen",
+      "transitionOnboarding enforces the allowed graph",
+      "service-worker.js wires onboarding + settings + doctor",
+      "popup.js wires onboarding + settings + doctor user actions",
+    ],
+  },
+  {
     relPath: "test/native-host-authenticated.test.ts",
     keywords: ["assert"],
   },
@@ -99,6 +118,9 @@ const matrix: ReadonlyArray<MatrixEntry> = [
       "bridge-auth.js",
       "control-state.js",
       "site-authorizations.js",
+      "settings.js",
+      "onboarding.js",
+      "connection-doctor.js",
       "popup.html",
       "popup.js",
       "popup.css",

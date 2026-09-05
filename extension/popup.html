@@ -27,6 +27,26 @@
         </dl>
         <p id="approval-envelope"></p>
       </section>
+      <section id="onboarding" data-stage="unknown">
+        <h2>Onboarding</h2>
+        <ol id="onboarding-stages">
+          <li data-stage="detect-core">Detect companion core</li>
+          <li data-stage="pair">Pair with companion</li>
+          <li data-stage="settings">Choose preferences</li>
+          <li data-stage="ready">Ready</li>
+        </ol>
+        <p id="onboarding-status">Not started.</p>
+        <nav id="onboarding-actions">
+          <button type="button" id="onboarding-advance">Next step</button>
+          <button type="button" id="onboarding-restart">Restart</button>
+        </nav>
+      </section>
+      <section id="doctor" data-severity="ok">
+        <h2>Connection doctor</h2>
+        <p id="doctor-summary">No issues.</p>
+        <ol id="doctor-issues"></ol>
+        <button type="button" id="doctor-recheck">Re-run</button>
+      </section>
       <section id="site-authorizations">
         <h2>Site permissions</h2>
         <p id="site-target-row">
@@ -45,6 +65,35 @@
           <ul id="site-grants"></ul>
           <ul id="site-denials"></ul>
         </details>
+      </section>
+      <section id="settings">
+        <h2>Settings</h2>
+        <p id="settings-density-row">
+          <label for="settings-density">Interface density</label>
+          <select id="settings-density">
+            <option value="compact">Compact</option>
+            <option value="default" selected>Default</option>
+            <option value="verbose">Verbose</option>
+          </select>
+        </p>
+        <p id="settings-startup-row">
+          <label for="settings-startup">Startup behaviour</label>
+          <select id="settings-startup">
+            <option value="remember" selected>Remember last state</option>
+            <option value="idle">Start idle</option>
+            <option value="disconnected">Start disconnected</option>
+          </select>
+        </p>
+        <p id="settings-diagnostics-row">
+          <label>
+            <input id="settings-diagnostics" type="checkbox" />
+            Share redacted diagnostics with the support bundle
+          </label>
+        </p>
+        <nav id="settings-actions">
+          <button type="button" id="settings-save">Save</button>
+          <button type="button" id="settings-reset-pairing">Reset pairing</button>
+        </nav>
       </section>
       <section id="audit">
         <h2>Recent activity</h2>

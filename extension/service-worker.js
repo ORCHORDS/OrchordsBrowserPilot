@@ -20,6 +20,22 @@ import {
   createSiteAuthorizations,
   STORAGE_KEY_EXPORT as SITE_AUTHZ_STORAGE_KEY,
 } from "./site-authorizations.js";
+import {
+  SETTINGS_STORAGE_KEY,
+  defaultSettings,
+  saveSettings,
+  loadSettings,
+} from "./settings.js";
+import {
+  ONBOARDING_STORAGE_KEY,
+  defaultOnboardingState,
+  loadOnboardingState,
+  advanceOnboarding,
+  transitionOnboarding,
+  persistOnboardingState,
+  resetOnboarding,
+} from "./onboarding.js";
+import { diagnose } from "./connection-doctor.js";
 
 const PRODUCT = "Orchords Web Pilot";
 const NATIVE_HOST = "com.orchords.web_pilot";
@@ -32,6 +48,11 @@ let replayWindow = new ReplayWindow();
 let pairingState;
 let controlState = createControlState({ initial: CONTROL_STATES.DISCONNECTED });
 let siteAuthorizations = createSiteAuthorizations();
+let settings = defaultSettings();
+let onboarding = defaultOnboardingState();
+let lastBridgeError = null;
+let browserInfo = null;
+let coreInfo = null;
 
 function logLifecycle(event) {
   console.info(`[${PRODUCT}] extension ${event}`);
@@ -87,6 +108,18 @@ const siteAuthzReady = chrome.storage.local
     return true;
   });
 
+const settingsReady = loadSettings(chrome.storage.local).then((s) => {
+  settings = s;
+  return s;
+});
+
+const onboardingReady = chrome.storage.local
+  .get(ONBOARDING_STORAGE_KEY)
+  .then((stored) => {
+    onboarding = loadOnboardingState(stored);
+    return onboarding;
+  });
+
 async function persistControlState() {
   const snap = controlState.snapshot();
   await chrome.storage.session.set({ [CONTROL_STATE_STORAGE_KEY]: snap });
@@ -101,15 +134,49 @@ async function persistSiteAuthorizations() {
   await broadcastControlState();
 }
 
+async function persistSettings() {
+  await chrome.storage.local.set({ [SETTINGS_STORAGE_KEY]: settings });
+  await broadcastControlState();
+}
+
+async function persistOnboarding() {
+  await persistOnboardingState(chrome.storage.local, onboarding);
+  await broadcastControlState();
+}
+
 async function broadcastControlState() {
   try {
     await chrome.runtime.sendMessage({
       kind: "control-state:update",
-      snapshot: { ...controlState.snapshot(), siteAuthorizations: siteAuthorizations.snapshot() },
+      snapshot: composeSnapshot(),
     });
   } catch {
     // Popup may not be open; sendMessage rejects when no listener.
   }
+}
+
+function composeSnapshot() {
+  return {
+    ...controlState.snapshot(),
+    siteAuthorizations: siteAuthorizations.snapshot(),
+    settings,
+    onboarding,
+    doctor: doctorOutput(),
+    browser: browserInfo,
+    core: coreInfo,
+    lastBridgeError,
+  };
+}
+
+function doctorOutput() {
+  return diagnose({
+    manifestVersion: chrome.runtime.getManifest?.()?.manifest_version ?? 3,
+    browser: browserInfo,
+    core: coreInfo,
+    pairing: pairingState?.pairing,
+    lastError: lastBridgeError,
+    controlState: controlState.snapshot().state,
+  });
 }
 
 async function renderBadge() {
@@ -166,6 +233,7 @@ async function handleNativeMessage(message) {
     bridgeClient = new AuthenticatedBridgeClient(nativePort, pairingState.pairing);
     await rememberBridgeEnvelope(message);
     await applyControlTransition({ type: "bridge.connected", actor: ACTOR.SYSTEM, reason: message.type });
+    lastBridgeError = null;
     logLifecycle(message.type === "bridge.paired" ? "native bridge paired" : "native bridge ready");
     return;
   }
@@ -194,6 +262,11 @@ function connectNativeBridge() {
     const reason = chrome.runtime.lastError?.message;
     bridgeClient?.disconnect(reason ?? "native bridge disconnected");
     bridgeClient = null;
+    lastBridgeError = {
+      code: reason ? "EXT-NATIVE-DISCONNECTED" : "EXT-NATIVE-DISCONNECTED",
+      message: reason ?? "native bridge disconnected",
+      at: Date.now(),
+    };
     void applyControlTransition({
       type: "bridge.disconnected",
       actor: ACTOR.SYSTEM,
@@ -242,6 +315,12 @@ const SITE_AUTHZ_ACTIONS = new Set([
   "revoke_site",
 ]);
 
+const ONBOARDING_ACTIONS = new Set([
+  "advance_onboarding",
+  "transition_onboarding",
+  "reset_onboarding",
+]);
+
 function isPopupRequest(message) {
   if (!message || typeof message !== "object" || Array.isArray(message)) return false;
   return message.kind === "user-action";
@@ -275,6 +354,62 @@ chrome.runtime.onMessage.addListener((message, sender, _sendResponse) => {
       } catch (error) {
         console.warn(
           `[${PRODUCT}] rejected site-authorization ${action}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    })();
+    return false;
+  }
+  if (action === "reset_pairing") {
+    void (async () => {
+      try {
+        await chrome.storage.local.remove("orchordsNativeBridgePairing");
+        pairingState = null;
+        onboarding = resetOnboarding();
+        await persistOnboarding();
+        await broadcastControlState();
+      } catch (error) {
+        console.warn(
+          `[${PRODUCT}] reset pairing failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    })();
+    return false;
+  }
+  if (action === "set_settings") {
+    void (async () => {
+      try {
+        await settingsReady;
+        settings = await saveSettings(chrome.storage.local, message.payload ?? {});
+        await broadcastControlState();
+      } catch (error) {
+        console.warn(
+          `[${PRODUCT}] settings update failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    })();
+    return false;
+  }
+  if (action === "run_doctor") {
+    void broadcastControlState();
+    return false;
+  }
+  if (ONBOARDING_ACTIONS.has(action)) {
+    void (async () => {
+      try {
+        await onboardingReady;
+        if (action === "advance_onboarding") {
+          const r = advanceOnboarding(onboarding);
+          if (r.changed) onboarding = r.state;
+        } else if (action === "transition_onboarding") {
+          const r = transitionOnboarding(onboarding, message.payload?.stage);
+          if (r.changed) onboarding = r.state;
+        } else if (action === "reset_onboarding") {
+          onboarding = resetOnboarding();
+        }
+        await persistOnboarding();
+      } catch (error) {
+        console.warn(
+          `[${PRODUCT}] onboarding ${action} failed: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     })();

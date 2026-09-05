@@ -1,13 +1,15 @@
-// Extension popup controller (#125 / #124).
+// Extension popup controller (#125 / #124 / #129).
 //
 // Runs in an extension_page context with the manifest's extension_pages CSP
 // ('self' only). It MUST NOT trust any data that originated from page
 // content; only chrome.runtime messages from the privileged service worker
 // are authoritative. Every user click dispatches a typed message back to
 // the service worker, which is the sole writer of the canonical control
-// state machine and the site authorization registry.
+// state machine, the site authorization registry, settings, onboarding
+// state and the connection-doctor report.
 
 import { GRANT_KIND } from "./site-authorizations.js";
+import { ONBOARDING_STAGES } from "./onboarding.js";
 
 const STATE_LABEL = {
   disconnected: "Disconnected",
@@ -23,6 +25,14 @@ const DECISION_LABEL = {
   allowed: "Active grant for this origin.",
   denied: "Origin is denied.",
   unknown: "No grant for this origin.",
+};
+
+const DOCTOR_SEVERITY_LABEL = {
+  blocking: "Blocking issues found.",
+  error: "Errors detected.",
+  warning: "Warnings detected.",
+  info: "Advisory information.",
+  ok: "No issues.",
 };
 
 const elements = {
@@ -43,6 +53,20 @@ const elements = {
   siteRevokeSite: document.getElementById("site-revoke-site"),
   siteGrants: document.getElementById("site-grants"),
   siteDenials: document.getElementById("site-denials"),
+  onboardingSection: document.getElementById("onboarding"),
+  onboardingStages: document.getElementById("onboarding-stages"),
+  onboardingStatus: document.getElementById("onboarding-status"),
+  onboardingAdvance: document.getElementById("onboarding-advance"),
+  onboardingRestart: document.getElementById("onboarding-restart"),
+  doctorSection: document.getElementById("doctor"),
+  doctorSummary: document.getElementById("doctor-summary"),
+  doctorIssues: document.getElementById("doctor-issues"),
+  doctorRecheck: document.getElementById("doctor-recheck"),
+  settingsDensity: document.getElementById("settings-density"),
+  settingsStartup: document.getElementById("settings-startup"),
+  settingsDiagnostics: document.getElementById("settings-diagnostics"),
+  settingsSave: document.getElementById("settings-save"),
+  settingsResetPairing: document.getElementById("settings-reset-pairing"),
   buttons: {
     pause: document.getElementById("action-pause"),
     stop: document.getElementById("action-stop"),
@@ -55,6 +79,8 @@ const elements = {
 };
 
 let lastRegistry = { grants: [], denials: [], onceUsed: [] };
+let lastSettings = null;
+let lastOnboarding = null;
 
 function renderAudit(audit) {
   elements.auditList.replaceChildren();
@@ -82,6 +108,55 @@ function renderRegistry(registry) {
     elements.siteDenials.appendChild(li);
   }
   refreshDecision();
+}
+
+function renderSettings(settings) {
+  lastSettings = settings ?? lastSettings;
+  if (!lastSettings) return;
+  elements.settingsDensity.value = lastSettings.interfaceDensity ?? "default";
+  elements.settingsStartup.value = lastSettings.startupBehavior ?? "remember";
+  elements.settingsDiagnostics.checked = Boolean(lastSettings.diagnosticsOptIn);
+}
+
+function renderOnboarding(onboarding) {
+  lastOnboarding = onboarding ?? lastOnboarding;
+  if (!lastOnboarding) return;
+  const stage = lastOnboarding.stage ?? ONBOARDING_STAGES.UNKNOWN;
+  elements.onboardingSection.dataset.stage = stage;
+  elements.onboardingStatus.textContent =
+    stage === ONBOARDING_STAGES.READY
+      ? "Onboarding complete. You are ready to control the browser."
+      : `Stage: ${stage}`;
+  const items = elements.onboardingStages.querySelectorAll("li");
+  items.forEach((li) => {
+    li.dataset.done = lastOnboarding.completed.includes(li.dataset.stage)
+      ? "true"
+      : "false";
+    li.dataset.current = li.dataset.stage === stage ? "true" : "false";
+  });
+  elements.onboardingAdvance.disabled = stage === ONBOARDING_STAGES.READY;
+}
+
+function renderDoctor(doctor) {
+  const severity = doctor?.severity ?? "ok";
+  elements.doctorSection.dataset.severity = severity;
+  elements.doctorSummary.textContent =
+    DOCTOR_SEVERITY_LABEL[severity] ?? DOCTOR_SEVERITY_LABEL.ok;
+  elements.doctorIssues.replaceChildren();
+  for (const issue of doctor?.issues ?? []) {
+    const li = document.createElement("li");
+    li.dataset.severity = issue.severity;
+    const title = document.createElement("strong");
+    title.textContent = `${issue.code} — ${issue.severity}`;
+    li.appendChild(title);
+    const msg = document.createElement("span");
+    msg.textContent = ` ${issue.message}`;
+    li.appendChild(msg);
+    const fix = document.createElement("p");
+    fix.textContent = `Fix: ${issue.fix}`;
+    li.appendChild(fix);
+    elements.doctorIssues.appendChild(li);
+  }
 }
 
 function refreshDecision() {
@@ -146,9 +221,10 @@ function renderState(snapshot) {
       : "";
   }
 
-  if (snapshot?.siteAuthorizations) {
-    renderRegistry(snapshot.siteAuthorizations);
-  }
+  if (snapshot?.siteAuthorizations) renderRegistry(snapshot.siteAuthorizations);
+  if (snapshot?.settings) renderSettings(snapshot.settings);
+  if (snapshot?.onboarding) renderOnboarding(snapshot.onboarding);
+  if (snapshot?.doctor) renderDoctor(snapshot.doctor);
   renderAudit(snapshot?.audit ?? []);
 }
 
@@ -177,6 +253,20 @@ elements.siteDenySite.addEventListener("click", () => {
 elements.siteRevokeSite.addEventListener("click", () => {
   dispatch("revoke_site", { origin: elements.siteTarget.value.trim() });
 });
+
+elements.onboardingAdvance.addEventListener("click", () => dispatch("advance_onboarding"));
+elements.onboardingRestart.addEventListener("click", () => dispatch("reset_onboarding"));
+
+elements.doctorRecheck.addEventListener("click", () => dispatch("run_doctor"));
+
+elements.settingsSave.addEventListener("click", () => {
+  dispatch("set_settings", {
+    interfaceDensity: elements.settingsDensity.value,
+    startupBehavior: elements.settingsStartup.value,
+    diagnosticsOptIn: elements.settingsDiagnostics.checked,
+  });
+});
+elements.settingsResetPairing.addEventListener("click", () => dispatch("reset_pairing"));
 
 chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {
   if (!message || message.kind !== "control-state:update") return;
