@@ -4,7 +4,7 @@ import express from "express";
 import http from "node:http";
 import type { Server } from "node:http";
 
-import { buildHardening } from "../src/http-hardening.ts";
+import { buildHardening, parseTrustedProxyList } from "../src/http-hardening.ts";
 
 const servers: Server[] = [];
 
@@ -75,6 +75,31 @@ async function start(
 }
 
 describe("HTTP hardening regression contract (#43)", () => {
+  it("parses a bounded exact-IP trusted proxy list", () => {
+    assert.deepEqual(
+      [...parseTrustedProxyList("127.0.0.1, ::1, 10.0.0.2, 127.0.0.1")],
+      ["127.0.0.1", "::1", "10.0.0.2"],
+    );
+    assert.deepEqual([...parseTrustedProxyList(undefined)], []);
+    assert.deepEqual([...parseTrustedProxyList("  ")], []);
+  });
+
+  it("rejects hostnames, CIDRs, and oversized trusted proxy lists", () => {
+    assert.throws(
+      () => parseTrustedProxyList("proxy.internal"),
+      /contains invalid IP/,
+    );
+    assert.throws(
+      () => parseTrustedProxyList("10.0.0.0/8"),
+      /contains invalid IP/,
+    );
+    const tooMany = Array.from({ length: 65 }, (_, i) => `198.51.100.${(i % 254) + 1}`).join(",");
+    assert.throws(
+      () => parseTrustedProxyList(tooMany),
+      /supports at most 64 IPs/,
+    );
+  });
+
   it("applies security headers to rejection responses", async () => {
     const { base } = await start({});
     const res = await rawRequest(base, { headers: { Host: "evil.example" } });
@@ -91,7 +116,7 @@ describe("HTTP hardening regression contract (#43)", () => {
   });
 
   it("trustProxy=true alone never trusts an arbitrary direct peer X-Forwarded-For", async () => {
-    const { hardening } = await start({ trustProxy: true });
+    const { hardening } = await start({ trustProxy: true, trustedProxies: new Set() });
     const fake = {
       headers: { "x-forwarded-for": "198.51.100.10" },
       socket: { remoteAddress: "203.0.113.9" },
@@ -101,6 +126,22 @@ describe("HTTP hardening regression contract (#43)", () => {
       "203.0.113.9",
       "the socket peer stays authoritative until that exact proxy address is explicitly trusted",
     );
+  });
+
+  it("loads explicit trusted proxy peers from PILOT_HTTP_TRUSTED_PROXIES when options omit them", async () => {
+    const original = process.env.PILOT_HTTP_TRUSTED_PROXIES;
+    process.env.PILOT_HTTP_TRUSTED_PROXIES = "127.0.0.1";
+    try {
+      const { hardening } = await start({ trustProxy: true });
+      const fake = {
+        headers: { "x-forwarded-for": "198.51.100.10" },
+        socket: { remoteAddress: "127.0.0.1" },
+      } as never;
+      assert.equal(hardening.clientIp(fake), "198.51.100.10");
+    } finally {
+      if (original === undefined) delete process.env.PILOT_HTTP_TRUSTED_PROXIES;
+      else process.env.PILOT_HTTP_TRUSTED_PROXIES = original;
+    }
   });
 
   it("trusts X-Forwarded-For only when forwarding is enabled and the direct socket peer is explicitly trusted", async () => {

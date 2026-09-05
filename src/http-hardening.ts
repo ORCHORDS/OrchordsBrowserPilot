@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import type { Request, RequestHandler, Response } from "express";
 
 /**
@@ -35,10 +36,9 @@ export interface HardeningOptions {
    */
   trustProxy: boolean;
   /**
-   * Exact socket-peer IPs that are authorized reverse proxies. Empty or
-   * undefined means forwarded client IP headers are ignored even when
-   * `trustProxy` is true. This fail-closed behavior prevents the historical
-   * `trustProxy=true` => trust any direct peer spoofing bug.
+   * Exact socket-peer IPs that are authorized reverse proxies. When omitted,
+   * `PILOT_HTTP_TRUSTED_PROXIES` supplies the same exact-IP list. Empty means
+   * forwarded client IP headers are ignored even when `trustProxy` is true.
    */
   trustedProxies?: Set<string>;
   /** Cap the forwarded-for chain length to defeat unbounded spoofing. */
@@ -66,10 +66,37 @@ export interface RequestLike {
 }
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1", "::ffff:127.0.0.1"]);
+const TRUSTED_PROXY_MAX_ENTRIES = 64;
+const TRUSTED_PROXY_MAX_TOKEN_BYTES = 64;
 
 function firstHeader(v: string | string[] | undefined): string | undefined {
   if (Array.isArray(v)) return v[0];
   return v && v.length > 0 ? v : undefined;
+}
+
+/**
+ * Parse an exact-IP trusted-proxy list. Hostnames and CIDR ranges are
+ * deliberately rejected in this first secure deployment contract: name
+ * resolution and CIDR matching need separate, explicit semantics rather than
+ * being guessed inside the request path.
+ */
+export function parseTrustedProxyList(raw: string | undefined): Set<string> {
+  if (!raw || raw.trim().length === 0) return new Set<string>();
+  const values = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (values.length > TRUSTED_PROXY_MAX_ENTRIES) {
+    throw new Error(`PILOT_HTTP_TRUSTED_PROXIES supports at most ${TRUSTED_PROXY_MAX_ENTRIES} IPs`);
+  }
+  const result = new Set<string>();
+  for (const value of values) {
+    if (Buffer.byteLength(value, "utf8") > TRUSTED_PROXY_MAX_TOKEN_BYTES || isIP(value) === 0) {
+      throw new Error(`PILOT_HTTP_TRUSTED_PROXIES contains invalid IP: ${value}`);
+    }
+    result.add(value);
+  }
+  return result;
 }
 
 /**
@@ -126,14 +153,13 @@ function forwardedChain(req: RequestLike, trustProxy: boolean, trust: Set<string
 
 function makeClientIp(
   trustProxy: boolean,
-  trustedProxies: Set<string> | undefined,
+  trustedProxies: Set<string>,
   maxForwardedHops: number | undefined,
 ): (req: RequestLike) => string {
-  const trust = trustedProxies ?? new Set<string>();
   const hopCap = maxForwardedHops ?? 32;
   return (req: RequestLike): string => {
     const socketIp = req.socket?.remoteAddress ?? "unknown";
-    const chain = forwardedChain(req, trustProxy, trust);
+    const chain = forwardedChain(req, trustProxy, trustedProxies);
     if (!chain) return socketIp;
     if (chain.length > hopCap) return socketIp;
 
@@ -142,7 +168,7 @@ function makeClientIp(
     // address, matching the standard reverse-proxy trust model.
     for (let i = chain.length - 1; i >= 0; i -= 1) {
       const hop = chain[i]!;
-      if (!trust.has(hop)) return hop;
+      if (!trustedProxies.has(hop)) return hop;
     }
 
     // Every forwarded hop was trusted. The left-most entry is the furthest
@@ -180,7 +206,9 @@ export function defaultAllowedHosts(host: string): Set<string> {
 }
 
 export function buildHardening(opts: HardeningOptions): HardeningHandle {
-  const clientIp = makeClientIp(opts.trustProxy, opts.trustedProxies, opts.maxForwardedHops);
+  const trustedProxies =
+    opts.trustedProxies ?? parseTrustedProxyList(process.env.PILOT_HTTP_TRUSTED_PROXIES);
+  const clientIp = makeClientIp(opts.trustProxy, trustedProxies, opts.maxForwardedHops);
 
   const hits = new Map<string, { count: number; windowStart: number }>();
   const WINDOW_MS = 60_000;
@@ -236,7 +264,7 @@ export function buildHardening(opts: HardeningOptions): HardeningHandle {
   // hop cap is treated as malformed and rejected outright when the request
   // actually came through an explicitly trusted proxy.
   const forwardedBound: RequestHandler = (req, res, next) => {
-    const chain = forwardedChain(req, opts.trustProxy, opts.trustedProxies ?? new Set<string>());
+    const chain = forwardedChain(req, opts.trustProxy, trustedProxies);
     if (chain && chain.length > (opts.maxForwardedHops ?? 32)) {
       res.status(400).json({ error: "malformed x-forwarded-for" });
       return;
