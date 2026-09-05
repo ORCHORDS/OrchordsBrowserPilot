@@ -90,9 +90,23 @@ describe("HTTP hardening regression contract (#43)", () => {
     assert.equal(res.status, 403);
   });
 
-  it("trusts X-Forwarded-For only when the direct socket peer is explicitly trusted", async () => {
+  it("trustProxy=true alone never trusts an arbitrary direct peer X-Forwarded-For", async () => {
+    const { hardening } = await start({ trustProxy: true });
+    const fake = {
+      headers: { "x-forwarded-for": "198.51.100.10" },
+      socket: { remoteAddress: "203.0.113.9" },
+    } as never;
+    assert.equal(
+      hardening.clientIp(fake),
+      "203.0.113.9",
+      "the socket peer stays authoritative until that exact proxy address is explicitly trusted",
+    );
+  });
+
+  it("trusts X-Forwarded-For only when forwarding is enabled and the direct socket peer is explicitly trusted", async () => {
     const { base } = await start({
       rateLimitPerMinute: 1,
+      trustProxy: true,
       trustedProxies: new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]),
     });
     const first = await fetch(`${base}/work`, { headers: { "X-Forwarded-For": "198.51.100.10" } });
@@ -105,8 +119,21 @@ describe("HTTP hardening regression contract (#43)", () => {
     );
   });
 
+  it("ignores X-Forwarded-For when explicit proxy addresses exist but forwarding is disabled", async () => {
+    const { hardening } = await start({
+      trustProxy: false,
+      trustedProxies: new Set(["127.0.0.1"]),
+    });
+    const fake = {
+      headers: { "x-forwarded-for": "198.51.100.10" },
+      socket: { remoteAddress: "127.0.0.1" },
+    } as never;
+    assert.equal(hardening.clientIp(fake), "127.0.0.1");
+  });
+
   it("walks a trusted proxy chain from right to left and chooses the nearest untrusted client", async () => {
     const { hardening } = await start({
+      trustProxy: true,
       trustedProxies: new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1", "10.0.0.2"]),
     });
     const fake = {
@@ -116,8 +143,25 @@ describe("HTTP hardening regression contract (#43)", () => {
     assert.equal(hardening.clientIp(fake), "198.51.100.20");
   });
 
+  it("stops at the nearest untrusted forwarded hop instead of skipping it", async () => {
+    const { hardening } = await start({
+      trustProxy: true,
+      trustedProxies: new Set(["127.0.0.1"]),
+    });
+    const fake = {
+      headers: { "x-forwarded-for": "198.51.100.20, 203.0.113.7" },
+      socket: { remoteAddress: "127.0.0.1" },
+    } as never;
+    assert.equal(
+      hardening.clientIp(fake),
+      "203.0.113.7",
+      "the closest untrusted hop is the effective client boundary",
+    );
+  });
+
   it("bounds forwarded-chain size instead of accepting an unbounded spoofing header", async () => {
     const { base } = await start({
+      trustProxy: true,
       trustedProxies: new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]),
       maxForwardedHops: 4,
     });
@@ -128,6 +172,7 @@ describe("HTTP hardening regression contract (#43)", () => {
 
   it("bounds rate-limiter key memory under many distinct clients", async () => {
     const { base, hardening } = await start({
+      trustProxy: true,
       trustedProxies: new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]),
       rateLimitMaxKeys: 3,
     });

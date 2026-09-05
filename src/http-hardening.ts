@@ -28,10 +28,18 @@ export interface HardeningOptions {
   rateLimitPerMinute: number;
   maxBodyBytes: number;
   requestTimeoutMs: number;
-  /** When true, always honor X-Forwarded-For. */
+  /**
+   * Enable forwarded-header processing. This flag is NOT a trust boundary by
+   * itself: X-Forwarded-For is consulted only when the direct socket peer is
+   * also present in `trustedProxies`.
+   */
   trustProxy: boolean;
-  /** When `trustProxy` is false, only honor X-Forwarded-For if the direct
-   *  socket peer is in this set. Empty/undefined disables XFF entirely. */
+  /**
+   * Exact socket-peer IPs that are authorized reverse proxies. Empty or
+   * undefined means forwarded client IP headers are ignored even when
+   * `trustProxy` is true. This fail-closed behavior prevents the historical
+   * `trustProxy=true` => trust any direct peer spoofing bug.
+   */
   trustedProxies?: Set<string>;
   /** Cap the forwarded-for chain length to defeat unbounded spoofing. */
   maxForwardedHops?: number;
@@ -99,30 +107,14 @@ function allowlistContainsLoopback(set: Set<string>): boolean {
 }
 
 /**
- * Resolve the effective client IP for the given request.
- *
- * Algorithm:
- *   1. Read the socket's `remoteAddress` as the trust anchor.
- *   2. Decide whether to consult X-Forwarded-For:
- *      - trustProxy === true → always consult.
- *      - else if `trustedProxies` is set and contains the socket peer →
- *        consult (a known reverse proxy is in front).
- *      - else → ignore XFF entirely (untrusted peer cannot dictate it).
- *   3. If consulting XFF, split by comma and walk right-to-left. Each
- *      hop must be in `trustedProxies` to keep walking; the first
- *      hop not in the set is the effective client.
- *   4. Bound the chain by `maxForwardedHops`; longer chains are treated
- *      as malformed and the socket peer is returned.
- */
-/**
- * Parse the X-Forwarded-For chain when policy allows consulting it.
- * Returns undefined when XFF must be ignored entirely (untrusted peer or
- * absent header); the chain otherwise, ordered client-first.
+ * Parse the X-Forwarded-For chain only when the direct socket peer is an
+ * explicitly trusted proxy. `trustProxy=true` is merely an enable switch and
+ * can never make an arbitrary direct peer trusted.
  */
 function forwardedChain(req: RequestLike, trustProxy: boolean, trust: Set<string>): string[] | undefined {
+  if (!trustProxy) return undefined;
   const socketIp = req.socket?.remoteAddress ?? "unknown";
-  const canConsult = trustProxy || (trust.size > 0 && trust.has(socketIp));
-  if (!canConsult) return undefined;
+  if (trust.size === 0 || !trust.has(socketIp)) return undefined;
   const header = firstHeader(req.headers["x-forwarded-for"]);
   if (!header) return undefined;
   const chain = header
@@ -144,17 +136,17 @@ function makeClientIp(
     const chain = forwardedChain(req, trustProxy, trust);
     if (!chain) return socketIp;
     if (chain.length > hopCap) return socketIp;
-    let lastTrusted = socketIp;
-    let i = chain.length - 1;
-    while (i >= 0) {
+
+    // The socket peer was already proven trusted by forwardedChain(). Walk
+    // the forwarded chain right-to-left and stop at the nearest untrusted
+    // address, matching the standard reverse-proxy trust model.
+    for (let i = chain.length - 1; i >= 0; i -= 1) {
       const hop = chain[i]!;
-      if (trust.has(hop) || trust.has(lastTrusted)) {
-        lastTrusted = hop;
-        i -= 1;
-        continue;
-      }
-      return hop;
+      if (!trust.has(hop)) return hop;
     }
+
+    // Every forwarded hop was trusted. The left-most entry is the furthest
+    // known address and therefore the effective client identity.
     return chain[0]!;
   };
 }
@@ -241,8 +233,8 @@ export function buildHardening(opts: HardeningOptions): HardeningHandle {
   };
 
   // Forwarded-chain bound (#43): an XFF chain longer than the configured
-  // hop cap is treated as malformed and rejected outright — falling back
-  // to the socket peer would silently let a spoofer dictate their key.
+  // hop cap is treated as malformed and rejected outright when the request
+  // actually came through an explicitly trusted proxy.
   const forwardedBound: RequestHandler = (req, res, next) => {
     const chain = forwardedChain(req, opts.trustProxy, opts.trustedProxies ?? new Set<string>());
     if (chain && chain.length > (opts.maxForwardedHops ?? 32)) {
