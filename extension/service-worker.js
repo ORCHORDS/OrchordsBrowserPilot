@@ -1,6 +1,11 @@
 import {
+  BridgeOutboundQueue,
   ReplayWindow,
+  createBridgeCompatReport,
   createBridgeEnvelope,
+  createBridgeHelloPayload,
+  createBridgeWelcomePayload,
+  evaluateCompatibility,
   validateBridgeEnvelope,
 } from "./bridge-protocol.js";
 import { AuthenticatedBridgeClient } from "./bridge-client.js";
@@ -45,6 +50,7 @@ const CONTROL_STATE_STORAGE_KEY = "nativeBridgeControlState";
 let nativePort = null;
 let bridgeClient = null;
 let replayWindow = new ReplayWindow();
+let outboundQueue = new BridgeOutboundQueue();
 let pairingState;
 let controlState = createControlState({ initial: CONTROL_STATES.DISCONNECTED });
 let siteAuthorizations = createSiteAuthorizations();
@@ -53,6 +59,21 @@ let onboarding = defaultOnboardingState();
 let lastBridgeError = null;
 let browserInfo = null;
 let coreInfo = null;
+let bridgeCompat = null;
+
+function postEnvelope(type, payload, options = {}) {
+  if (!nativePort) return { ok: false, code: "native_disconnected" };
+  const envelope = createBridgeEnvelope(type, payload, options);
+  const result = outboundQueue.enqueue(envelope);
+  if (!result.ok) return result;
+  try {
+    nativePort.postMessage(envelope);
+    return { ok: true, id: envelope.id };
+  } catch (error) {
+    outboundQueue.drainAll();
+    return { ok: false, code: "post_failed", message: error instanceof Error ? error.message : String(error) };
+  }
+}
 
 function logLifecycle(event) {
   console.info(`[${PRODUCT}] extension ${event}`);
@@ -164,6 +185,7 @@ function composeSnapshot() {
     doctor: doctorOutput(),
     browser: browserInfo,
     core: coreInfo,
+    bridgeCompat,
     lastBridgeError,
   };
 }
@@ -225,6 +247,41 @@ async function handleNativeMessage(message) {
     return;
   }
 
+  // #123 — version handshake.
+  //
+  // The native host announces its product version in `bridge.welcome` after
+  // we send `bridge.hello`. We refuse any welcome that doesn't fall inside
+  // our supported range and emit a `bridge.compat.report` envelope back so
+  // the host can record the disagreement.
+  if (message.type === "bridge.welcome") {
+    const evaluation = evaluateCompatibility({
+      hello: {
+        bridgeProtocol: 1,
+        extensionVersion: chrome.runtime.getManifest?.()?.version ?? "0.0.0",
+      },
+      welcome: message.payload,
+    });
+    if (!evaluation.ok) {
+      console.warn(`[${PRODUCT}] rejected bridge.welcome: ${evaluation.code}`);
+      postEnvelope("bridge.compat.report", createBridgeCompatReport({
+        coreVersion: message.payload?.coreVersion ?? "unknown",
+        extensionVersion: chrome.runtime.getManifest?.()?.version ?? "0.0.0",
+      }));
+      bridgeCompat = { ok: false, code: evaluation.code };
+      lastBridgeError = {
+        code: "EXT-BRIDGE-INCOMPATIBLE",
+        message: `native host version ${message.payload?.coreVersion ?? "unknown"} not in supported range`,
+        at: Date.now(),
+      };
+      return;
+    }
+    bridgeCompat = evaluation;
+    coreInfo = { ...(coreInfo ?? {}), version: evaluation.coreVersion };
+    logLifecycle(`native bridge compat ok core=${evaluation.coreVersion}`);
+    await rememberBridgeEnvelope(message);
+    return;
+  }
+
   if (message.type === "bridge.paired" || message.type === "bridge.ready") {
     await pairingReady;
     pairingState = await acceptPairingResponse(chrome.storage.local, pairingState, message);
@@ -281,7 +338,13 @@ function connectNativeBridge() {
 
   void Promise.all([pairingReady, controlStateReady])
     .then(() => {
+      // #123 — open with BOTH the pairing hello (existing wire format)
+      // and the explicit version-handshake hello (bridge.hello with
+      // product versions). Existing hosts keep working through the
+      // pairing payload; newer hosts answer with a versioned welcome.
       port.postMessage(createBridgeEnvelope("bridge.hello", createPairingHelloPayload(pairingState)));
+      const extensionVersion = chrome.runtime.getManifest?.()?.version ?? "0.0.0";
+      postEnvelope("bridge.hello", createBridgeHelloPayload({ extensionVersion }));
     })
     .catch((error) => {
       const detail = error instanceof Error ? String(error.message) : String(error);

@@ -38,6 +38,24 @@ const matrix: ReadonlyArray<MatrixEntry> = [
     keywords: ["assert"],
   },
   {
+    relPath: "test/extension-bridge-version-handshake.test.ts",
+    keywords: [
+      "bridge.hello payload freezes protocol + version range",
+      "bridge.welcome payload freezes protocol + core version",
+      "evaluateCompatibility rejects a core version below the floor",
+      "compat.report envelope payload is well-formed",
+    ],
+  },
+  {
+    relPath: "test/extension-bridge-backpressure.test.ts",
+    keywords: [
+      "BridgeOutboundQueue enforces its bounded capacity",
+      "BridgeOutboundQueue rejects non-objects",
+      "BridgeOutboundQueue drains in FIFO order",
+      "BridgeOutboundQueue drops expired envelopes and reports the count",
+    ],
+  },
+  {
     relPath: "test/extension-native-bridge.test.ts",
     keywords: ["assert"],
   },
@@ -104,8 +122,38 @@ const matrix: ReadonlyArray<MatrixEntry> = [
     keywords: ["EXT-NM-LOCAL-001", "MUST NOT claim resistance"],
   },
   {
+    relPath: "test/extension-threat-model.test.ts",
+    keywords: [
+      "extension threat model document exists and is owned by #131",
+      "extension threat model enumerates every in-scope extension file",
+      "every extension file referenced by the threat model exists on disk",
+      "extension threat model references its companion issue owners",
+    ],
+  },
+  {
     relPath: "docs/security/threat-model.md",
     keywords: ["EXT-NM-LOCAL-001", "#131 owns extension manifest/permission security", "#137 owns extension security regression coverage"],
+  },
+  {
+    relPath: "docs/security/extension-threat-model.md",
+    keywords: [
+      "owned by",
+      "#131",
+      "STRIDE per extension file",
+      "manifest.json",
+      "service-worker.js",
+      "bridge-protocol.js",
+      "bridge-auth.js",
+      "bridge-client.js",
+      "pairing-state.js",
+      "control-state.js",
+      "site-authorizations.js",
+      "settings.js",
+      "onboarding.js",
+      "connection-doctor.js",
+      "popup.html",
+      "popup.js",
+    ],
   },
   {
     relPath: "docs/security/extension-privileged-apis.md",
