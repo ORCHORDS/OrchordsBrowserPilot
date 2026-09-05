@@ -59,6 +59,16 @@ const matrix: ReadonlyArray<MatrixEntry> = [
     ],
   },
   {
+    relPath: "test/extension-site-authorizations.test.ts",
+    keywords: [
+      "canonical origin",
+      "ONCE grant is consumed by the first dispatch",
+      "storage key is exported",
+      "popup.js wires site authorization",
+      "service-worker.js persists and consults the site-authorization registry",
+    ],
+  },
+  {
     relPath: "test/native-host-authenticated.test.ts",
     keywords: ["assert"],
   },
@@ -88,6 +98,7 @@ const matrix: ReadonlyArray<MatrixEntry> = [
       "bridge-protocol.js",
       "bridge-auth.js",
       "control-state.js",
+      "site-authorizations.js",
       "popup.html",
       "popup.js",
       "popup.css",

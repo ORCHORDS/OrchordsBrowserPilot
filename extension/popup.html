@@ -27,6 +27,25 @@
         </dl>
         <p id="approval-envelope"></p>
       </section>
+      <section id="site-authorizations">
+        <h2>Site permissions</h2>
+        <p id="site-target-row">
+          <label for="site-target">Origin</label>
+          <input id="site-target" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="example.com" />
+        </p>
+        <p id="site-decision" data-decision="unknown">No grant for this origin.</p>
+        <nav id="site-actions">
+          <button type="button" id="site-allow-once" disabled>Allow once</button>
+          <button type="button" id="site-allow-session" disabled>Allow for session</button>
+          <button type="button" id="site-deny-site" disabled>Deny</button>
+          <button type="button" id="site-revoke-site" disabled>Revoke</button>
+        </nav>
+        <details id="site-registry">
+          <summary>Registered origins</summary>
+          <ul id="site-grants"></ul>
+          <ul id="site-denials"></ul>
+        </details>
+      </section>
       <section id="audit">
         <h2>Recent activity</h2>
         <ol id="audit-list" aria-live="polite"></ol>

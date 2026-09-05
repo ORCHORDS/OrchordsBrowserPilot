@@ -91,6 +91,20 @@ section h2 { font-size: 12px; margin: 0 0 6px 0; color: var(--muted); text-trans
 #audit-list li:last-child { border-bottom: none; }
 #audit-list li[data-actor="user"] { color: var(--fg); }
 
+#site-authorizations { display: grid; gap: 6px; }
+#site-target-row { display: grid; grid-template-columns: max-content 1fr; gap: 6px; align-items: center; margin: 0; }
+#site-target-row label { font-size: 11px; color: var(--muted); }
+#site-target { font-size: 12px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); }
+#site-decision { font-size: 11px; margin: 0; color: var(--muted); }
+#site-decision[data-decision="allowed"] { color: #1f8a3b; }
+#site-decision[data-decision="denied"] { color: var(--danger); }
+#site-decision[data-decision="unknown"] { color: var(--muted); }
+#site-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+#site-registry summary { cursor: pointer; font-size: 11px; color: var(--muted); }
+#site-registry ul { list-style: none; padding: 0; margin: 4px 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+#site-grants li { color: #1f8a3b; }
+#site-denials li { color: var(--danger); }
+
 nav { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 12px; }
 button { font-size: 12px; padding: 6px 8px; cursor: pointer; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }

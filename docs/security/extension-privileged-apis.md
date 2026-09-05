@@ -136,17 +136,25 @@ document itself; the scan therefore ignores this file
   audit log + approval-invalidation set. All persistence is delegated to
   the service worker; the popup renders via `chrome.action.setBadge*` and
   via the messages returned to it from the service worker.
+- `extension/site-authorizations.js`: no privileged API; pure per-origin
+  grant / deny / once registry. Persistence lives in
+  `extension/service-worker.js` which is the sole writer under
+  `chrome.storage.local[orchordsSiteAuthorizations]`. Surface owned by
+  `#124`.
 - `extension/popup.html`: declarative markup; no privileged API. Served
   from `extension_pages` CSP (`script-src 'self'; object-src 'self'`) and
   declares its own restrictive CSP meta tag (`default-src 'self'; no
   remote, no inline, no eval`). Referenced from `manifest.action.default_popup`.
 - `extension/popup.js`: `chrome.runtime.sendMessage` (to dispatch
-  user-action messages back to the service worker) and
-  `chrome.runtime.onMessage` (to receive control-state updates from the
-  service worker). Page content never writes to this file.
+  user-action messages back to the service worker, including the four
+  site-authorization actions `allow_once`, `allow_for_session`,
+  `deny_site`, `revoke_site`) and `chrome.runtime.onMessage` (to receive
+  control-state updates from the service worker). Page content never
+  writes to this file.
 - `extension/popup.css`: bundled stylesheet served from extension_pages
   CSP. Contains the per-state colour mapping used by the badge/header in
-  the popup.
+  the popup, plus the per-decision colour mapping for the
+  site-authorization panel introduced by `#124`.
 - `extension/manifest.json`: no privileged API; declarative configuration
   only. Subject to the manifest pinning in `test/extension-manifest.test.ts`.
 
@@ -174,6 +182,9 @@ next `npm test` invocation.
 
 - `#131` — extension manifest/permission security (this document).
 - `#123` — extension↔core authenticated bridge controls.
+- `#124` — per-site / per-origin authorization registry
+  (`extension/site-authorizations.js`,
+  `test/extension-site-authorizations.test.ts`).
 - `#125` — visible agent-control state, pause/stop/takeover UI and
   stale-approval invalidation (`extension/control-state.js`,
   `extension/popup.html`, `extension/popup.js`, `extension/popup.css`,

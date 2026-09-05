@@ -15,6 +15,11 @@ import {
   CONTROL_STATES,
   createControlState,
 } from "./control-state.js";
+import {
+  GRANT_KIND,
+  createSiteAuthorizations,
+  STORAGE_KEY_EXPORT as SITE_AUTHZ_STORAGE_KEY,
+} from "./site-authorizations.js";
 
 const PRODUCT = "Orchords Web Pilot";
 const NATIVE_HOST = "com.orchords.web_pilot";
@@ -26,6 +31,7 @@ let bridgeClient = null;
 let replayWindow = new ReplayWindow();
 let pairingState;
 let controlState = createControlState({ initial: CONTROL_STATES.DISCONNECTED });
+let siteAuthorizations = createSiteAuthorizations();
 
 function logLifecycle(event) {
   console.info(`[${PRODUCT}] extension ${event}`);
@@ -66,6 +72,21 @@ const controlStateReady = chrome.storage.session
     return true;
   });
 
+const siteAuthzReady = chrome.storage.local
+  .get(SITE_AUTHZ_STORAGE_KEY)
+  .then((stored) => {
+    const candidate = stored?.[SITE_AUTHZ_STORAGE_KEY];
+    if (candidate && typeof candidate === "object") {
+      siteAuthorizations = createSiteAuthorizations({
+        grants: candidate.grants,
+        denials: candidate.denials,
+        onceUsed: candidate.onceUsed,
+        audit: candidate.audit,
+      });
+    }
+    return true;
+  });
+
 async function persistControlState() {
   const snap = controlState.snapshot();
   await chrome.storage.session.set({ [CONTROL_STATE_STORAGE_KEY]: snap });
@@ -73,11 +94,18 @@ async function persistControlState() {
   await renderBadge();
 }
 
+async function persistSiteAuthorizations() {
+  await chrome.storage.local.set({
+    [SITE_AUTHZ_STORAGE_KEY]: siteAuthorizations.snapshot(),
+  });
+  await broadcastControlState();
+}
+
 async function broadcastControlState() {
   try {
     await chrome.runtime.sendMessage({
       kind: "control-state:update",
-      snapshot: controlState.snapshot(),
+      snapshot: { ...controlState.snapshot(), siteAuthorizations: siteAuthorizations.snapshot() },
     });
   } catch {
     // Popup may not be open; sendMessage rejects when no listener.
@@ -100,6 +128,26 @@ async function applyControlTransition(event) {
   const result = controlState.apply(event);
   if (result.changed) await persistControlState();
   return result;
+}
+
+function applySiteAuthorization(action, payload) {
+  const origin = typeof payload?.origin === "string" ? payload.origin.trim() : "";
+  switch (action) {
+    case "allow_once":
+      siteAuthorizations.grant(origin, GRANT_KIND.ONCE);
+      break;
+    case "allow_for_session":
+      siteAuthorizations.grant(origin, GRANT_KIND.SESSION);
+      break;
+    case "deny_site":
+      siteAuthorizations.deny(origin, "user denied");
+      break;
+    case "revoke_site":
+      siteAuthorizations.revoke(origin, "user revoked");
+      break;
+    default:
+      throw new Error(`unknown site-authorization action: ${String(action)}`);
+  }
 }
 
 async function handleNativeMessage(message) {
@@ -187,6 +235,12 @@ chrome.action.onClicked.addListener(() => {
 });
 
 const USER_ACTIONS = new Set(Object.values(CONTROL_ACTIONS));
+const SITE_AUTHZ_ACTIONS = new Set([
+  "allow_once",
+  "allow_for_session",
+  "deny_site",
+  "revoke_site",
+]);
 
 function isPopupRequest(message) {
   if (!message || typeof message !== "object" || Array.isArray(message)) return false;
@@ -210,6 +264,20 @@ chrome.runtime.onMessage.addListener((message, sender, _sendResponse) => {
   const { action } = message;
   if (action === "snapshot") {
     void broadcastControlState();
+    return false;
+  }
+  if (SITE_AUTHZ_ACTIONS.has(action)) {
+    void (async () => {
+      try {
+        await siteAuthzReady;
+        applySiteAuthorization(action, message.payload);
+        await persistSiteAuthorizations();
+      } catch (error) {
+        console.warn(
+          `[${PRODUCT}] rejected site-authorization ${action}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    })();
     return false;
   }
   if (!USER_ACTIONS.has(action)) {
