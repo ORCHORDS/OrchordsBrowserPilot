@@ -212,6 +212,14 @@ document itself; the scan therefore ignores this file
   `chrome.alarms` permission that the extension ships with). The
   module never calls `chrome.debugger`, `chrome.scripting`,
   `chrome.tabs.*`, `chrome.cookies.*`, or `chrome.webRequest.*`.
+- `extension/envelope-cancellation.js` (#133): pure data layer for
+  cancelling in-flight envelopes and negotiating the envelope-type
+  table between the extension and the native host. No privileged API.
+- `extension/browser-attach.js` (#134): authenticated browser reuse
+  adapter. Pure data layer. The adapter refuses at construction time
+  any method whose name begins with the forbidden list
+  (`chrome.cookies.*`, `chrome.history.*`, `chrome.bookmarks.*`,
+  `chrome.browsingData.*`, `chrome.contentSettings.*`).
 - `extension/manifest.json`: no privileged API; declarative configuration
   only. Subject to the manifest pinning in `test/extension-manifest.test.ts`.
 
@@ -259,6 +267,12 @@ next `npm test` invocation.
 - `#130` — MV3 service-worker suspension / wakeup / reconnect
   (`extension/service-worker-lifecycle.js` +
   `test/extension-service-worker-lifecycle.test.ts`).
+- `#133` — envelope versioning / cancellation / compat negotiation
+  (`extension/envelope-cancellation.js` +
+  `test/extension-envelope-cancellation.test.ts`).
+- `#134` — authenticated browser reuse without exporting cookies
+  (`extension/browser-attach.js` +
+  `test/extension-browser-attach.test.ts`).
 - `#129` — onboarding, settings, reset-pairing, and connection-doctor
   flow (`extension/onboarding.js`, `extension/settings.js`,
   `extension/connection-doctor.js`, the `reset_pairing` /

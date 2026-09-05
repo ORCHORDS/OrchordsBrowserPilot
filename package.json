@@ -22,7 +22,7 @@
     "format": "prettier --check \"src/**/*.ts\"",
     "test": "node --test --import tsx \"test/**/*.test.ts\"",
     "extension:check": "node --test --import tsx test/extension-manifest.test.ts",
-    "extension:gate": "node --test --import tsx test/extension-manifest.test.ts test/extension-privileged-apis.test.ts test/extension-security-matrix.test.ts test/extension-threat-model.test.ts test/extension-bridge-version-handshake.test.ts test/extension-bridge-backpressure.test.ts test/extension-tab-attachment.test.ts test/extension-content-script.test.ts test/extension-cdp-adapter.test.ts test/extension-side-panel.test.ts test/extension-service-worker-lifecycle.test.ts",
+    "extension:gate": "node --test --import tsx test/extension-manifest.test.ts test/extension-privileged-apis.test.ts test/extension-security-matrix.test.ts test/extension-threat-model.test.ts test/extension-bridge-version-handshake.test.ts test/extension-bridge-backpressure.test.ts test/extension-tab-attachment.test.ts test/extension-content-script.test.ts test/extension-cdp-adapter.test.ts test/extension-side-panel.test.ts test/extension-service-worker-lifecycle.test.ts test/extension-envelope-cancellation.test.ts test/extension-browser-attach.test.ts",
     "extension:pack": "node scripts/package-extension.mjs",
     "audit": "npm audit --omit=dev --audit-level=high"
   },
