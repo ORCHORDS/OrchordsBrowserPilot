@@ -141,21 +141,41 @@ test("shutdown controller: addCleanup rejects non-function run()", () => {
   assert.throws(() => ctrl.addCleanup({ name: "bad", run: undefined as any }));
 });
 
-test("shutdown controller: emits grace-exceeded only when total elapsed > graceMs", async () => {
+test("shutdown controller: emits grace-exceeded when total elapsed > graceMs", async () => {
   const sinks = captureSink();
+  const graceMs = 30;
   const ctrl = createShutdownController({
-    graceMs: 30,
+    graceMs,
     forceExitAfterMs: 1000,
     onLifecycle: sinks.sink,
   });
   ctrl.addCleanup({
-    name: "almost-too-slow",
+    name: "past-grace",
     run: () => new Promise<void>((resolve) => setTimeout(resolve, 80)),
+    // The default hook timeout equals graceMs. Give this fixture a later
+    // hook deadline so cleanup actually runs beyond the total grace budget
+    // instead of racing the exact grace/timeout boundary.
+    timeoutMs: 120,
   });
   await ctrl.trigger("explicit");
-  assert.ok(
+  const exceeded = sinks.events.find((e) => e.kind === "grace-exceeded");
+  assert.ok(exceeded, "must report grace-exceeded when cleanup runs past graceMs");
+  assert.ok((exceeded.ms ?? 0) > graceMs, "grace-exceeded must carry an elapsed time beyond graceMs");
+});
+
+test("shutdown controller: does not emit grace-exceeded within graceMs", async () => {
+  const sinks = captureSink();
+  const ctrl = createShutdownController({
+    graceMs: 100,
+    forceExitAfterMs: 1000,
+    onLifecycle: sinks.sink,
+  });
+  ctrl.addCleanup({ name: "fast", run: () => undefined });
+  await ctrl.trigger("explicit");
+  assert.equal(
     sinks.events.some((e) => e.kind === "grace-exceeded"),
-    "must report grace-exceeded when cleanup runs past graceMs",
+    false,
+    "must not report grace-exceeded for cleanup that stays within graceMs",
   );
 });
 
