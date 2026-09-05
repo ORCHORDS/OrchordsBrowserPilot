@@ -160,6 +160,23 @@ export function createSiteAuthorizations(options = {}) {
     return true;
   }
 
+  function recordAudit(entry) {
+    if (!entry || typeof entry !== "object") return false;
+    // Only a known-prefix set of entry kinds may be appended from outside the
+    // registry — protects the audit log from arbitrary caller data.
+    const allowed = new Set([
+      "dispatch.allowed",
+      "dispatch.denied",
+      "dispatch.unknown_origin",
+      "dispatch.drifted_origin",
+      "dispatch.consumed_once",
+      "dispatch.once_race_lost",
+    ]);
+    if (!allowed.has(entry.kind)) return false;
+    record({ ...entry });
+    return true;
+  }
+
   function consumeOnce(urlLike) {
     const origin = originOf(urlLike);
     if (!origin) return false;
@@ -193,6 +210,7 @@ export function createSiteAuthorizations(options = {}) {
     listGranted,
     listDenied,
     getAudit,
+    recordAudit,
     snapshot,
     exportJson,
   };

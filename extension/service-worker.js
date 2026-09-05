@@ -28,6 +28,8 @@ import {
   createSiteAuthorizations,
   STORAGE_KEY_EXPORT as SITE_AUTHZ_STORAGE_KEY,
 } from "./site-authorizations.js";
+import { createTabAttachment } from "./tab-attachment.js";
+import { createDispatchGate } from "./dispatch-gate.js";
 import {
   SETTINGS_STORAGE_KEY,
   defaultSettings,
@@ -58,6 +60,12 @@ let swLifecycle = null;
 let pairingState;
 let controlState = createControlState({ initial: CONTROL_STATES.DISCONNECTED });
 let siteAuthorizations = createSiteAuthorizations();
+const tabAttachment = createTabAttachment({ tabsApi: chrome.tabs });
+const dispatchGate = createDispatchGate({
+  registry: siteAuthorizations,
+  attachment: tabAttachment,
+  tabsApi: chrome.tabs,
+});
 let settings = defaultSettings();
 let onboarding = defaultOnboardingState();
 let lastBridgeError = null;
@@ -421,6 +429,7 @@ const SITE_AUTHZ_ACTIONS = new Set([
   "deny_site",
   "revoke_site",
 ]);
+const DISPATCH_ACTIONS = new Set(["dispatch"]);
 
 const ONBOARDING_ACTIONS = new Set([
   "advance_onboarding",
@@ -538,6 +547,32 @@ chrome.runtime.onMessage.addListener((message, sender, _sendResponse) => {
   }
   if (!USER_ACTIONS.has(action)) {
     console.warn(`[${PRODUCT}] rejected unknown user action: ${String(action)}`);
+    return false;
+  }
+  if (DISPATCH_ACTIONS.has(action)) {
+    void (async () => {
+      const token = typeof message.token === "string" ? message.token : "";
+      const intent = typeof message.intent === "string" ? message.intent : "act";
+      const runId = typeof message.runId === "string" ? message.runId : null;
+      const verdict = await dispatchGate.enforce({ token, intent, runId });
+      if (!verdict.allowed) {
+        void broadcastControlState();
+        console.warn(
+          `[${PRODUCT}] dispatch refused: ${verdict.code} (${verdict.reason ?? "no reason"})`,
+        );
+        return;
+      }
+      // Authorised. The native bridge on the other side will receive the
+      // already-tab-attached envelope — we never expose the tab URL or any
+      // site-authorization state to the bridge directly.
+      try {
+        await broadcastControlState();
+      } catch (error) {
+        console.warn(
+          `[${PRODUCT}] dispatch broadcast failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    })();
     return false;
   }
   void (async () => {
