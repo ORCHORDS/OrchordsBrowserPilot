@@ -30,6 +30,7 @@ import {
   OperationQueueFullError,
   type OperationEvent,
 } from "./operation-queue.js";
+import { createShutdownController, type ShutdownController } from "./shutdown.js";
 
 export { toolInputSchema };
 
@@ -50,13 +51,33 @@ export async function startStdio(config: Config): Promise<void> {
   await server.connect(transport);
   console.error("orchords-web-pilot (stdio) ready");
 
-  const shutdown = async () => {
-    await session.dispose();
-    await manager.close().catch(() => undefined);
-    process.exit(0);
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  const shutdownCtrl: ShutdownController = createShutdownController({
+    graceMs: 5_000,
+  });
+  // Tear down the per-session queue + page, the underlying browser manager,
+  // and the MCP transport (issue #78). `session.dispose()` already cancels
+  // the queue first, so we just call it once.
+  shutdownCtrl.addCleanup({
+    name: "session.dispose",
+    run: () => session.dispose(),
+  });
+  shutdownCtrl.addCleanup({
+    name: "manager.close",
+    run: async () => { await manager.close().catch(() => undefined); },
+  });
+  shutdownCtrl.addCleanup({
+    name: "transport.close",
+    run: async () => { await transport.close().catch(() => undefined); },
+  });
+  shutdownCtrl.wireProcessSignals();
+  // Stdio-specific: if the parent coding-agent host closes stdin, that is
+  // the canonical "I'm done" signal. Treat it as an explicit shutdown
+  // trigger so the same cleanup path runs as for SIGTERM.
+  process.stdin.once("end", () => { void shutdownCtrl.trigger("stdin-eof"); });
+
+  // After clean drain, exit 0. A hung cleanup is fenced by the controller's
+  // watchdog so we don't park the process here forever.
+  void shutdownCtrl.whenDone().then(() => process.exit(0));
 }
 
 /**
@@ -173,19 +194,49 @@ export async function startHttp(config: Config): Promise<void> {
   }, 60_000);
   sweep.unref();
 
-  const shutdown = async () => {
-    clearInterval(sweep);
-    await registry.disposeAll();
-    process.exit(0);
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  const shutdownCtrl: ShutdownController = createShutdownController({ graceMs: 5_000 });
+  // `httpServer` is assigned by the `app.listen(...)` call below. The
+  // cleanup closes over a `let` so it can resolve the binding at trigger
+  // time even though the listen hasn't completed yet.
+  let httpServer: import("node:http").Server | undefined;
+  shutdownCtrl.addCleanup({
+    name: "sweeper.stop",
+    run: () => { clearInterval(sweep); },
+  });
+  shutdownCtrl.addCleanup({
+    name: "registry.disposeAll",
+    run: async () => { await registry.disposeAll(); },
+  });
+  shutdownCtrl.addCleanup({
+    name: "http.server.close",
+    run: () => new Promise<void>((resolve) => {
+      if (!httpServer || !httpServer.listening) return resolve();
+      httpServer.close((err) => {
+        if (err) console.warn(`orchords-web-pilot: server.close failed (${err.message})`);
+        resolve();
+      });
+    }),
+  });
+  shutdownCtrl.wireProcessSignals();
 
-  app.listen(config.http.port, config.http.host, () => {
+  // Readiness probe (issue #78): while the controller is draining, return
+  // 503 so orchestrator probes (Kubernetes readiness, systemd watchdog)
+  // stop sending traffic and let the drain finish.
+  app.get(`${config.http.path}/ready`, (_req, res) => {
+    if (shutdownCtrl.isDraining()) {
+      res.status(503).json({ ready: false, draining: true });
+      return;
+    }
+    res.json({ ready: true, draining: false });
+  });
+
+  httpServer = app.listen(config.http.port, config.http.host, () => {
     console.error(
       `orchords-web-pilot (http) listening on http://${config.http.host}:${config.http.port}${config.http.path}`,
     );
   });
+
+  void shutdownCtrl.whenDone().then(() => process.exit(0));
 }
 
 function headerString(v: string | string[] | undefined): string | undefined {
