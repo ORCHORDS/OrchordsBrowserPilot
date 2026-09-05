@@ -75,9 +75,29 @@ export async function startStdio(config: Config): Promise<void> {
   // trigger so the same cleanup path runs as for SIGTERM.
   process.stdin.once("end", () => { void shutdownCtrl.trigger("stdin-eof"); });
 
-  // After clean drain, exit 0. A hung cleanup is fenced by the controller's
-  // watchdog so we don't park the process here forever.
-  void shutdownCtrl.whenDone().then(() => process.exit(0));
+  // After cleanup completes, exit 0. We must NOT use `shutdownCtrl.whenDone()`
+  // here because that returns a Promise which resolves on the very next tick
+  // when no trigger has fired — which means the stdio process would exit the
+  // instant `startStdio` returns, before the first MCP request even arrived.
+  // Instead we wait for the controller to be triggered (which only happens
+  // when SIGTERM, SIGINT, stdin EOF, or an explicit trigger fires), then exit
+  // cleanly. The controller's watchdog still fences a hung cleanup.
+  let resolveExit: () => void = () => undefined;
+  const exitWhenDrained = new Promise<void>((r) => { resolveExit = r; });
+  const origTrigger = shutdownCtrl.trigger;
+  let firstTriggered = false;
+  const wrappedTrigger = (reason: Parameters<typeof origTrigger>[0]): Promise<void> => {
+    if (!firstTriggered) {
+      firstTriggered = true;
+      origTrigger(reason).then(resolveExit).catch(() => resolveExit());
+    }
+    return origTrigger(reason);
+  };
+  // Replace the controller's trigger with our wrapper so the first call
+  // resolves exitWhenDrained. Subsequent calls (re-entry, force-exit from
+  // watchdog) still hit the original idempotent path.
+  (shutdownCtrl as unknown as { trigger: typeof wrappedTrigger }).trigger = wrappedTrigger;
+  void exitWhenDrained.then(() => process.exit(0));
 }
 
 /**
@@ -236,7 +256,23 @@ export async function startHttp(config: Config): Promise<void> {
     );
   });
 
-  void shutdownCtrl.whenDone().then(() => process.exit(0));
+  // Wait for an actual shutdown trigger before exiting — see the matching
+  // pattern in `startStdio` for the full rationale. `whenDone()` resolves
+  // immediately when no trigger has fired, which would exit the HTTP server
+  // before it has handled a single request.
+  let resolveHttpExit: () => void = () => undefined;
+  const httpExit = new Promise<void>((r) => { resolveHttpExit = r; });
+  const origHttpTrigger = shutdownCtrl.trigger;
+  let httpFirstTriggered = false;
+  const wrappedHttpTrigger = (reason: Parameters<typeof origHttpTrigger>[0]): Promise<void> => {
+    if (!httpFirstTriggered) {
+      httpFirstTriggered = true;
+      origHttpTrigger(reason).then(resolveHttpExit).catch(() => resolveHttpExit());
+    }
+    return origHttpTrigger(reason);
+  };
+  (shutdownCtrl as unknown as { trigger: typeof wrappedHttpTrigger }).trigger = wrappedHttpTrigger;
+  void httpExit.then(() => process.exit(0));
 }
 
 function headerString(v: string | string[] | undefined): string | undefined {
