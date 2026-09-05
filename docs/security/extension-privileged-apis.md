@@ -1,0 +1,156 @@
+# Extension Privileged-API Inventory
+
+This document is the canonical inventory of every Chrome/Edge privileged API
+the Orchords Web Pilot extension is permitted to call, and the explicit list
+of APIs that are forbidden. It is the consumer contract that
+`docs/security/threat-model.md` (EXT-NM-LOCAL-001) and the manifest/CSP
+controls in `extension/manifest.json` rely on.
+
+It is owned by `#131` (extension manifest/permission security) and pinned by
+`test/extension-privileged-apis.test.ts`. The regression matrix that prevents
+silent deletion of any individual extension-security test is
+`test/extension-security-matrix.test.ts` (`#137`).
+
+## Scope
+
+In scope: every entry point in `extension/service-worker.js` (the MV3 service
+worker) and the modules it imports (`bridge-client.js`, `bridge-protocol.js`,
+`bridge-auth.js`, `pairing-state.js`).
+
+Out of scope: any future content script, side panel, devtools page, options
+page, or remote/externally connectable surface. Adding any of those requires
+an update to this document and to the manifest before it can land.
+
+## Allow-list
+
+The extension service worker is permitted to call the following privileged
+APIs only inside the listed module, only for the listed purpose, and only
+when the listed preconditions hold. Any other call site is a release-gate
+violation.
+
+### `chrome.runtime.connectNative(HOST_NAME)`
+
+- Allowed call site: `extension/bridge-client.js` only.
+- Precondition: pairing has completed and a non-stale pairing credential
+  exists in `chrome.storage.local` under the canonical pairing key.
+- Wire format: HMAC-authenticated envelopes produced by
+  `extension/bridge-protocol.js`; the native host validates origin, install,
+  profile, deadline, size, HMAC and replay state before dispatch (see
+  `test/native-host-authenticated.test.ts`).
+- Bound by: `#123` (extension↔core authenticated bridge controls).
+
+### `chrome.runtime.sendNativeMessage(HOST_NAME, message)`
+
+- Allowed call site: none today. This is reserved for fire-and-forget
+  notifications where `connectNative` is unsuitable. Any introduction must be
+  justified in this document and pinned by a regression test before landing.
+
+### `chrome.runtime.onMessage` / `chrome.runtime.onConnect`
+
+- Allowed call site: `extension/service-worker.js` only.
+- Precondition: every listener MUST reject any `sender` for which
+  `sender.id !== chrome.runtime.id` (only self + the registered native host
+  are legitimate senders; arbitrary extensions and arbitrary web pages must
+  not be able to dispatch bridge messages).
+- Bound by: `#123`.
+
+### `chrome.storage.local`
+
+- Allowed call sites: `extension/pairing-state.js`, `extension/service-worker.js`.
+- Permitted keys: pairing credential, replay nonces, policy snapshot. No
+  raw user data, no page content, no DOM snapshots.
+- Bound by: `#123`, `#131`, the storage-scoped invariants in
+  `test/extension-pairing-state.test.ts`.
+
+### `chrome.action`
+
+- Allowed call site: `extension/service-worker.js` only.
+- Permitted use: surface the toolbar button (`default_title` is already set
+  in `extension/manifest.json`). The action MAY open a future side panel;
+  until then it MUST NOT call `chrome.tabs.executeScript`,
+  `chrome.scripting.executeScript`, or `chrome.tabs.query` with host
+  content.
+- Bound by: `#131`, `#124` (when the side panel lands).
+
+## Forbidden list
+
+The following privileged APIs MUST NOT be called from any file under
+`extension/` today. The manifest already withholds every permission required
+to reach them; this list is the source-level counterpart that prevents a
+future contributor from re-introducing one of these APIs as a "harmless
+helper" or from adding the corresponding permission to the manifest without
+realising the security impact. Each entry is paired with the manifest
+permission that is withheld, the regression that enforces it, and the issue
+that owns the enforcement.
+
+| Forbidden API | Manifest permission withheld | Enforced by | Owner |
+| --- | --- | --- | --- |
+| `chrome.debugger.attach` / `chrome.debugger.detach` / `chrome.debugger.sendCommand` | `debugger` | `test/extension-manifest.test.ts` | `#131` |
+| `chrome.scripting.executeScript` / `chrome.scripting.insertCSS` / `chrome.scripting.removeCSS` / `chrome.scripting.registerContentScripts` | `scripting` | `test/extension-manifest.test.ts` | `#131` |
+| `chrome.tabs.executeScript` (legacy API, kept for completeness) | `tabs` (with `scripting` withheld) | `test/extension-manifest.test.ts` | `#131` |
+| `chrome.webRequest.onBeforeRequest` / `chrome.webRequest.onBeforeSendHeaders` / `chrome.webRequest.onHeadersReceived` / `chrome.webRequest.onResponseStarted` / `chrome.webRequest.onCompleted` | `webRequest` | `test/extension-manifest.test.ts` | `#131` |
+| `chrome.proxy.settings` / `chrome.proxy.onProxyError` | `proxy` | `test/extension-manifest.test.ts` | `#131` |
+| `chrome.enterprise.platformKeys.*` / `chrome.platformKeys.*` | (no permission requested) | source-level scan in `test/extension-privileged-apis.test.ts` | `#131` |
+| `chrome.management.*` | `management` | `test/extension-manifest.test.ts` | `#131` |
+| `chrome.cookies.*` | `cookies` | `test/extension-manifest.test.ts` | `#131` |
+| `chrome.history.*` | `history` | `test/extension-manifest.test.ts` | `#131` |
+| `chrome.contentSettings.*` | `contentSettings` | `test/extension-manifest.test.ts` | `#131` |
+| `chrome.privacy.*` | `privacy` | `test/extension-manifest.test.ts` | `#131` |
+| `chrome.pageCapture.*` | `pageCapture` | `test/extension-manifest.test.ts` | `#131` |
+| `chrome.tabCapture.*` / `chrome.desktopCapture.*` | `tabCapture` / `desktopCapture` / no permission | source-level scan in `test/extension-privileged-apis.test.ts` | `#131` |
+| `chrome.identity.*` | `identity` | `test/extension-manifest.test.ts` | `#131` |
+| `chrome.gcm.*` | `gcm` | `test/extension-manifest.test.ts` | `#131` |
+| `chrome.pushMessaging.*` / `chrome.notifications.*` | `notifications` | `test/extension-manifest.test.ts` | `#131` |
+| `chrome.browsingData.*` | `browsingData` | `test/extension-manifest.test.ts` | `#131` |
+| `chrome.downloads.*` | `downloads` | `test/extension-manifest.test.ts` | `#131` |
+| Any host pattern (`<all_urls>`, `http://*/*`, `https://*/*`, `*://*/*`, `file://*/*`) | host permissions (none requested) | `test/extension-manifest.test.ts` | `#131` |
+| `externally_connectable` IDs / URLs | (none configured) | `test/extension-manifest.test.ts` | `#131` |
+
+A bare token reference (for example a string literal `"chrome.debugger"`) in
+a code comment that is clearly documenting the policy IS permitted, because
+the source-level scan would otherwise generate false positives on the policy
+document itself; the scan therefore ignores this file
+(`docs/security/extension-privileged-apis.md`) and the test that pins it
+(`test/extension-privileged-apis.test.ts`).
+
+## Inventory by file
+
+- `extension/service-worker.js`: `chrome.runtime.onMessage`,
+  `chrome.runtime.onConnect`, `chrome.runtime.connectNative` (via the
+  bridge client module), `chrome.storage.local` (via the pairing state
+  module), `chrome.action` (toolbar registration only).
+- `extension/bridge-client.js`: `chrome.runtime.connectNative` exclusively.
+- `extension/bridge-protocol.js`: no privileged API; pure encoding/HMAC.
+- `extension/bridge-auth.js`: no privileged API; pure HMAC computation.
+- `extension/pairing-state.js`: `chrome.storage.local` exclusively.
+- `extension/manifest.json`: no privileged API; declarative configuration
+  only. Subject to the manifest pinning in `test/extension-manifest.test.ts`.
+
+## Update rule
+
+Any change that adds a new privileged API call, a new call site for an
+allow-listed API, or a new permission to `extension/manifest.json` MUST, in
+the same pull sequence on `main`:
+
+1. Update this inventory (allow-list table, forbidden-list table, inventory
+   by file).
+2. Update or add a test in `test/extension-privileged-apis.test.ts` that
+   pins the new surface.
+3. Pass the four-gate verification: `npm run lint`,
+   `npm run build`, `npm test`, `npm run extension:check`.
+4. Reference the owning issue (`#124`, `#125`, `#126`, etc.) in the commit
+   body so the regression matrix stays traceable.
+
+The source-level forbidden-API scan in
+`test/extension-privileged-apis.test.ts` is the hard guard: a new forbidden
+API token introduced anywhere under `extension/` will fail that test on the
+next `npm test` invocation.
+
+## Owners
+
+- `#131` — extension manifest/permission security (this document).
+- `#123` — extension↔core authenticated bridge controls.
+- `#137` — extension security regression coverage (matrix in
+  `test/extension-security-matrix.test.ts`).
+- `#91` — cross-product threat model / release-assurance policy
+  (`docs/security/threat-model.md`, which this inventory is a consumer of).
