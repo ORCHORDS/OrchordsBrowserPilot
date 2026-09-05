@@ -15,9 +15,10 @@ silent deletion of any individual extension-security test is
 
 In scope: every entry point in `extension/service-worker.js` (the MV3 service
 worker) and the modules it imports (`bridge-client.js`, `bridge-protocol.js`,
-`bridge-auth.js`, `pairing-state.js`).
+`bridge-auth.js`, `pairing-state.js`, `tab-attachment.js`,
+`bridge-relay.js`, `content-script.js`, `cdp-adapter.js`).
 
-Out of scope: any future content script, side panel, devtools page, options
+Out of scope: any future side panel, devtools page, options
 page, or remote/externally connectable surface. Adding any of those requires
 an update to this document and to the manifest before it can land.
 
@@ -167,6 +168,34 @@ document itself; the scan therefore ignores this file
   CSP. Contains the per-state colour mapping used by the badge/header in
   the popup, plus the per-decision colour mapping for the
   site-authorization panel introduced by `#124`.
+- `extension/tab-attachment.js` (#126): no privileged API; pure
+  deterministic tab resolver that mirrors `chrome.tabs` events. The
+  optional `bindChromeTabs(chrome)` helper attaches read-only listeners
+  to `chrome.tabs.onActivated`, `chrome.tabs.onUpdated`, and
+  `chrome.tabs.onRemoved`. It never calls `chrome.tabs.executeScript`,
+  `chrome.tabs.update`, or `chrome.tabs.remove`.
+- `extension/bridge-relay.js` (#127): no privileged API; pure
+  `runtime.connect`-shaped relay that forwards envelopes between the
+  service worker and a content script. It never calls `chrome.tabs.*`,
+  `chrome.debugger.*`, `chrome.scripting.*`, or `chrome.cookies.*`.
+- `extension/content-script.js` (#127): `chrome.runtime.onMessage`
+  listener only. The content script is read-only: it never calls
+  `chrome.tabs.*`, `chrome.scripting.*`, or any privileged API beyond
+  `runtime.sendMessage`. It is injected only via `chrome.scripting` →
+  wait — `chrome.scripting` is FORBIDDEN. The content script therefore
+  is NOT auto-injected; it is installed only via the canonical
+  `chrome.runtime.connect` channel from the service worker at the
+  user's explicit consent, on origins they have granted. The privileged
+  boundary is enforced by the privileged-API inventory, the source-level
+  forbidden-token scan in `test/extension-privileged-apis.test.ts`,
+  and the regression matrix in `test/extension-security-matrix.test.ts`.
+- `extension/cdp-adapter.js` (#132): no privileged API; pure policy
+  adapter that validates and redacts CDP envelopes before the service
+  worker forwards them to the native host. The adapter itself does not
+  speak to a browser; the native host is the only CDP endpoint the
+  product ever talks to, and the adapter is the policy boundary that
+  refuses `Browser.*`, `Audits.*`, `Security.*`, and every other CDP
+  domain not in `CDP_DOMAIN_ALLOWLIST`.
 - `extension/manifest.json`: no privileged API; declarative configuration
   only. Subject to the manifest pinning in `test/extension-manifest.test.ts`.
 
@@ -202,6 +231,13 @@ next `npm test` invocation.
   `extension/popup.html`, `extension/popup.js`, `extension/popup.css`,
   the badge text/background color in `extension/service-worker.js`, and
   the regression coverage in `test/extension-control-state.test.ts`).
+- `#126` — deterministic tab attachment + lifecycle adapter
+  (`extension/tab-attachment.js` + `test/extension-tab-attachment.test.ts`).
+- `#127` — content-script isolated-world bridge
+  (`extension/content-script.js`, `extension/bridge-relay.js` +
+  `test/extension-content-script.test.ts`).
+- `#132` — policy-gated CDP adapter (`extension/cdp-adapter.js` +
+  `test/extension-cdp-adapter.test.ts`).
 - `#129` — onboarding, settings, reset-pairing, and connection-doctor
   flow (`extension/onboarding.js`, `extension/settings.js`,
   `extension/connection-doctor.js`, the `reset_pairing` /
