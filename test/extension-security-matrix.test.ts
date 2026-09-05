@@ -120,6 +120,41 @@ const matrix: ReadonlyArray<MatrixEntry> = [
     ],
   },
   {
+    relPath: "test/extension-package.test.ts",
+    keywords: [
+      "package-extension produces a deterministic dry-run summary",
+      "package-extension flags mismatched manifest version",
+      "submit-extension refuses to run without a built bundle",
+    ],
+  },
+  {
+    relPath: "test/extension-e2e-fixture.test.ts",
+    keywords: [
+      "E2E fixture: every extension JS file exists on disk",
+      "E2E fixture: every HTML file declares a same-origin CSP",
+      "E2E fixture: extension JS files contain no positive forbidden-API usage",
+      "E2E fixture: manifest declares a service worker + an action popup + permissions allow-list",
+      "E2E fixture: temp profile dir can be created and listed",
+    ],
+  },
+  {
+    relPath: "scripts/package-extension.mjs",
+    keywords: [
+      "Reproducible packaging + signing driver",
+      "CRX signing credentials not present",
+      "manifest version",
+    ],
+  },
+  {
+    relPath: "scripts/submit-extension.mjs",
+    keywords: [
+      "Store submission scaffold",
+      "STORE_DEVELOPER_TOKEN",
+      "privacy-policy.md",
+      "manifest-for-review.json",
+    ],
+  },
+  {
     relPath: "test/extension-native-bridge.test.ts",
     keywords: ["assert"],
   },
