@@ -9,6 +9,8 @@ import {
   validateBridgeEnvelope,
 } from "./bridge-protocol.js";
 import { createServiceWorkerLifecycle } from "./service-worker-lifecycle.js";
+import { CURRENT_SCHEMA_VERSION, rollbackIfUnsupported, runMigrations } from "./schema-migrations.js";
+import { createSupportBundle } from "./support-bundle.js";
 import { AuthenticatedBridgeClient } from "./bridge-client.js";
 import {
   acceptPairingResponse,
@@ -375,17 +377,36 @@ function connectNativeBridge() {
   return port;
 }
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
   logLifecycle("installed");
+  // #138 — run schema migrations on every install / update.
+  await runSchemaMigrations();
   ensureSwLifecycle();
   connectNativeBridge();
 });
 
-chrome.runtime.onStartup.addListener(() => {
+chrome.runtime.onStartup.addListener(async () => {
   logLifecycle("started");
+  await runSchemaMigrations();
   ensureSwLifecycle();
   connectNativeBridge();
 });
+
+async function runSchemaMigrations() {
+  const stored = await chrome.storage.local.get(null);
+  let state = stored;
+  const versioned = Object.values(stored).find((entry) => entry && typeof entry === "object" && "_schema" in entry);
+  if (versioned) state = versioned;
+  const rollback = rollbackIfUnsupported(state, { stage: "fresh" });
+  if (rollback.backup) {
+    await chrome.storage.local.set({ orchordsExtensionBackup: rollback.backup });
+  }
+  const result = runMigrations(rollback.state);
+  if (result.ok) {
+    await chrome.storage.local.set({ orchordsExtensionRoot: result.state });
+    logLifecycle(`schema migrated to v${result.state._schema}`);
+  }
+}
 
 chrome.action.onClicked.addListener(() => {
   logLifecycle("one-time tab access granted by user gesture");
@@ -479,6 +500,20 @@ chrome.runtime.onMessage.addListener((message, sender, _sendResponse) => {
     void broadcastControlState();
     return false;
   }
+  if (action === "support_bundle") {
+    void (async () => {
+      try {
+        const bundle = createSupportBundle(composeSnapshot());
+        await chrome.storage.session.set({ orchordsSupportBundle: bundle });
+        void broadcastControlState();
+      } catch (error) {
+        console.warn(
+          `[${PRODUCT}] support bundle failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    })();
+    return false;
+  }
   if (ONBOARDING_ACTIONS.has(action)) {
     void (async () => {
       try {
@@ -531,3 +566,4 @@ chrome.runtime.onMessage.addListener((message, sender, _sendResponse) => {
 
 connectNativeBridge();
 ensureSwLifecycle();
+void runSchemaMigrations();

@@ -138,6 +138,45 @@ const matrix: ReadonlyArray<MatrixEntry> = [
     ],
   },
   {
+    relPath: "test/extension-schema-migrations.test.ts",
+    keywords: [
+      "CURRENT_SCHEMA_VERSION is a positive integer",
+      "migrationPlan returns the chain from a legacy version",
+      "runMigrations upgrades v1 \u2192 v4 and preserves user data",
+      "rollbackIfUnsupported rolls back an unsupported state and captures the backup",
+    ],
+  },
+  {
+    relPath: "test/extension-artifact-transfer.test.ts",
+    keywords: [
+      "canonicalArtifactReference requires a sha256 hash",
+      "ArtifactTransfer.remember collects inbound chunks and caps the size",
+      "ArtifactTransfer listOutbound / listInbound only carry references, never paths",
+      "sanitizeArtifactPath refuses absolute / traversal / drive-letter paths",
+    ],
+  },
+  {
+    relPath: "test/extension-support-bundle.test.ts",
+    keywords: [
+      "createSupportBundle writes a versioned bundle with redacted pairing",
+      "createSupportBundle never leaks the installId or filesystem paths",
+      "createSupportBundle redaction assertion passes for a clean snapshot",
+      "createSupportBundle truncates doctor messages and fixes to <= 240 chars",
+    ],
+  },
+  {
+    relPath: "test/extension-enterprise-policy.test.ts",
+    keywords: [
+      "extension enterprise policy doc exists and is owned by #139",
+      "manifest does NOT request the incognito permission",
+      "manifest does NOT request 'cookies' or 'history'",
+    ],
+  },
+  {
+    relPath: "docs/security/extension-enterprise-policy.md",
+    keywords: ["#139", "incognito", "multi-profile", "managed", "Pairing is per-profile"],
+  },
+  {
     relPath: "scripts/package-extension.mjs",
     keywords: [
       "Reproducible packaging + signing driver",
@@ -311,6 +350,9 @@ test("privileged-API inventory enumerates every in-scope extension file (#137)",
     "service-worker-lifecycle.js",
     "envelope-cancellation.js",
     "browser-attach.js",
+    "schema-migrations.js",
+    "artifact-transfer.js",
+    "support-bundle.js",
     "manifest.json",
     "popup.html",
     "popup.js",

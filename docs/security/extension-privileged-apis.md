@@ -17,7 +17,9 @@ In scope: every entry point in `extension/service-worker.js` (the MV3 service
 worker) and the modules it imports (`bridge-client.js`, `bridge-protocol.js`,
 `bridge-auth.js`, `pairing-state.js`, `tab-attachment.js`,
 `bridge-relay.js`, `content-script.js`, `cdp-adapter.js`,
-`service-worker-lifecycle.js`) plus the side-panel inspector
+`service-worker-lifecycle.js`, `envelope-cancellation.js`,
+`browser-attach.js`, `schema-migrations.js`, `artifact-transfer.js`,
+`support-bundle.js`) plus the side-panel inspector
 (`side-panel.html`, `side-panel.js`, `side-panel.css`).
 
 Out of scope: any future side panel, devtools page, options
@@ -220,6 +222,20 @@ document itself; the scan therefore ignores this file
   any method whose name begins with the forbidden list
   (`chrome.cookies.*`, `chrome.history.*`, `chrome.bookmarks.*`,
   `chrome.browsingData.*`, `chrome.contentSettings.*`).
+- `extension/schema-migrations.js` (#138): pure data layer for
+  migrating persisted state through schema versions. The migrations
+  list is frozen; adding a new version requires a paired migration
+  function, a test, and a bump of `CURRENT_SCHEMA_VERSION`.
+- `extension/artifact-transfer.js` (#140): artifact transfer policy
+  layer. Pure data. References carry only opaque IDs, sha256 hashes,
+  byte counts, and mime types. The transfer contract NEVER carries
+  filesystem paths; `sanitizeArtifactPath()` rejects absolute paths,
+  `..` traversal, and Windows drive letters.
+- `extension/support-bundle.js` (#141): redacted support bundle
+  generator. Pure data. The bundle intentionally omits pairing secrets,
+  installIds, filesystem paths, and any forbidden-API mention.
+  `assertSupportBundleRedactions()` is the runtime guard that
+  guarantees no forbidden token slipped through.
 - `extension/manifest.json`: no privileged API; declarative configuration
   only. Subject to the manifest pinning in `test/extension-manifest.test.ts`.
 
@@ -273,6 +289,18 @@ next `npm test` invocation.
 - `#134` — authenticated browser reuse without exporting cookies
   (`extension/browser-attach.js` +
   `test/extension-browser-attach.test.ts`).
+- `#138` — update / schema migration / compat window / rollback
+  (`extension/schema-migrations.js` +
+  `test/extension-schema-migrations.test.ts`).
+- `#139` — incognito / multi-profile / enterprise-managed policy
+  (`docs/security/extension-enterprise-policy.md` +
+  `test/extension-enterprise-policy.test.ts`).
+- `#140` — uploads / downloads / artifact transfer without host-path
+  leakage (`extension/artifact-transfer.js` +
+  `test/extension-artifact-transfer.test.ts`).
+- `#141` — diagnostics / audit correlation / redacted support bundle
+  (`extension/support-bundle.js` +
+  `test/extension-support-bundle.test.ts`).
 - `#129` — onboarding, settings, reset-pairing, and connection-doctor
   flow (`extension/onboarding.js`, `extension/settings.js`,
   `extension/connection-doctor.js`, the `reset_pairing` /
