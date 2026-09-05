@@ -24,11 +24,13 @@ import {
   type LiveStateSnapshot,
   type ProposedActionEnvelope,
   policyTools,
+  TOOL_RISK,
 } from "./policy/index.js";
 import {
   OperationCancelledError,
   OperationQueueFullError,
   type OperationEvent,
+  type OperationLane,
 } from "./operation-queue.js";
 import { createShutdownController, type ShutdownController } from "./shutdown.js";
 
@@ -365,9 +367,16 @@ export function buildServer(
     // AbortSignal; passing it into the queue ensures sender cancellation
     // can remove work that has not started. Once dispatch begins, running
     // browser/provider work must consume the signal cooperatively (#36).
+    //
+    // Lane split (issue #104 AC 4): read-only tools are routed to the
+    // read-only lane so independent observations do not serialize. The
+    // TOOL_RISK matrix is the single source of truth — adding a primitive
+    // to `policy/risk.ts` is the only edit required to widen the lane.
+    const lane: OperationLane = TOOL_RISK[name] === "read" ? "readonly" : "mutating";
     try {
       return await session.ops.run(name, () => dispatchTool(name, tool, args, request), {
         signal: extra.signal,
+        lane,
       });
     } catch (err) {
       if (err instanceof OperationQueueFullError) {
@@ -658,6 +667,7 @@ function operationEventContext(ev: OperationEvent): Record<string, unknown> {
     ctx.inFlight = ev.inFlight;
     ctx.queueWaitMs = ev.queueWaitMs;
     ctx.dispatchSequence = ev.dispatchSequence;
+    ctx.lane = ev.lane;
   }
   if (ev.kind === "completed") {
     ctx.ok = ev.ok;

@@ -54,6 +54,7 @@ describe("OperationQueue (P1 #104)", () => {
       cancelled: 0,
       completed: 1,
       maxConcurrent: 1,
+      maxReadonlyConcurrent: 4,
       queueMax: 64,
     });
   });

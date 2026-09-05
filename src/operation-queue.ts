@@ -1,8 +1,26 @@
 import { randomUUID } from "node:crypto";
 
+/**
+ * Lane discriminator for #104 AC 4. Read-only primitives
+ * (browser_snapshot, browser_console, browser_network, browser_wait) are
+ * safe to run in parallel because they observe without mutating page state;
+ * mutating primitives stay single-flight because they touch the same page.
+ * The split is intentionally coarse-grained — per-tool risk classification
+ * lives in `src/policy/risk.ts` and the queue just consumes the result.
+ */
+export type OperationLane = "mutating" | "readonly";
+
 export interface OperationQueueOptions {
-  /** Maximum operations that may be in-flight at once. Default 1. */
+  /** Maximum mutating operations that may be in-flight at once. Default 1. */
   maxConcurrent?: number;
+  /**
+   * Maximum read-only operations that may be in-flight at once. Default 4.
+   * Read-only ops still share the per-session FIFO with mutating ops so
+   * an in-flight `browser_navigate` is honored ahead of any queued
+   * `browser_snapshot` — the lane split only widens the read-only slot
+   * pool, it does not introduce a separate queue.
+   */
+  maxReadonlyConcurrent?: number;
   /** Maximum operations that may be queued behind in-flight slots. Default 64. */
   queueMax?: number;
   /** Maximum time a caller may wait in the backlog before cancellation. Default 30s. */
@@ -20,6 +38,7 @@ export type OperationEvent =
       sessionId: string;
       opId: string;
       tool: string;
+      lane: OperationLane;
       inFlight: number;
       queueWaitMs: number;
       dispatchSequence: number;
@@ -48,12 +67,14 @@ export interface OperationQueueStats {
   completed: number;
   /** Configured limits — useful for `/health` and metrics scrapers. */
   maxConcurrent: number;
+  maxReadonlyConcurrent: number;
   queueMax: number;
 }
 
 interface PendingOp {
   opId: string;
   tool: string;
+  lane: OperationLane;
   enqueuedAt: number;
   signal?: AbortSignal;
   start: () => void;
@@ -96,12 +117,15 @@ export class OperationQueueFullError extends Error {
  */
 export class OperationQueue {
   private readonly maxConcurrent: number;
+  private readonly maxReadonlyConcurrent: number;
   private readonly queueMax: number;
   private readonly waitTimeoutMs: number;
   public onEvent: (event: OperationEvent) => void;
 
   private readonly pending: PendingOp[] = [];
   private inFlight = 0;
+  private inFlightMutating = 0;
+  private inFlightReadonly = 0;
   private overflowedCount = 0;
   private cancelledCount = 0;
   private completedTotal = 0;
@@ -113,6 +137,7 @@ export class OperationQueue {
     options: OperationQueueOptions = {},
   ) {
     this.maxConcurrent = Math.max(1, options.maxConcurrent ?? 1);
+    this.maxReadonlyConcurrent = Math.max(1, options.maxReadonlyConcurrent ?? 4);
     this.queueMax = Math.max(0, options.queueMax ?? 64);
     this.waitTimeoutMs = Math.max(1, options.waitTimeoutMs ?? 30_000);
     this.onEvent = options.onEvent ?? (() => undefined);
@@ -120,6 +145,13 @@ export class OperationQueue {
 
   /**
    * Run `fn` once a concurrency slot is available.
+   *
+   * `lane` selects which slot pool the op consumes. The pending list stays
+   * a single FIFO — a mutating op queued ahead of a read-only op is honored
+   * in arrival order, so the queue never lets a read-only op jump ahead of
+   * an in-flight `browser_navigate`. Read-only ops may run in parallel up
+   * to `maxReadonlyConcurrent` once their turn at the head of the FIFO
+   * arrives, so independent observations do not artificially serialize.
    *
    * If `signal` is already aborted, the task never starts. If it aborts
    * while queued, the task is removed from the backlog and its promise is
@@ -131,9 +163,10 @@ export class OperationQueue {
   async run<T>(
     tool: string,
     fn: () => Promise<T>,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; lane?: OperationLane } = {},
   ): Promise<T> {
     const opId = randomUUID();
+    const lane: OperationLane = options.lane ?? "mutating";
 
     if (this.disposed) {
       const err = new OperationCancelledError(opId, tool, "session disposed", "session_disposed");
@@ -149,8 +182,8 @@ export class OperationQueue {
     }
 
     const enqueuedAt = Date.now();
-    if (this.inFlight < this.maxConcurrent && this.pending.length === 0) {
-      return this.execute(opId, tool, fn, enqueuedAt);
+    if (this.canDispatch(lane) && this.pending.length === 0) {
+      return this.execute(opId, tool, lane, fn, enqueuedAt);
     }
 
     if (this.pending.length >= this.queueMax) {
@@ -158,7 +191,7 @@ export class OperationQueue {
       throw new OperationQueueFullError(opId, tool, this.queueMax);
     }
 
-    return this.enqueue(opId, tool, fn, enqueuedAt, options.signal);
+    return this.enqueue(opId, tool, lane, fn, enqueuedAt, options.signal);
   }
 
   stats(): OperationQueueStats {
@@ -169,6 +202,7 @@ export class OperationQueue {
       cancelled: this.cancelledCount,
       completed: this.completedTotal,
       maxConcurrent: this.maxConcurrent,
+      maxReadonlyConcurrent: this.maxReadonlyConcurrent,
       queueMax: this.queueMax,
     };
   }
@@ -189,6 +223,7 @@ export class OperationQueue {
   private enqueue<T>(
     opId: string,
     tool: string,
+    lane: OperationLane,
     fn: () => Promise<T>,
     enqueuedAt: number,
     signal: AbortSignal | undefined,
@@ -200,11 +235,12 @@ export class OperationQueue {
       const entry: PendingOp = {
         opId,
         tool,
+        lane,
         enqueuedAt,
         signal,
         start: () => {
           entry.cleanup();
-          void this.execute(opId, tool, fn, enqueuedAt).then(resolve, reject);
+          void this.execute(opId, tool, lane, fn, enqueuedAt).then(resolve, reject);
         },
         reject,
         cleanup: () => {
@@ -257,10 +293,30 @@ export class OperationQueue {
     this.drain();
   }
 
+  /**
+   * Whether a new op in `lane` can dispatch immediately given the current
+   * in-flight counts.
+   *
+   * The mutating lane is a single-slot pool — only one mutating op at a
+   * time. The read-only lane is a wider pool (default 4), but read-only
+   * ops still gate on `inFlightMutating === 0`: `browser_snapshot` rebuilds
+   * the ref registry against `Session.pageGeneration()` and running it
+   * mid-`browser_navigate` would race the generation counter. After the
+   * mutating op drains, queued read-only ops can fan out in parallel.
+   */
+  private canDispatch(lane: OperationLane): boolean {
+    if (lane === "readonly") {
+      return this.inFlightMutating === 0 && this.inFlightReadonly < this.maxReadonlyConcurrent;
+    }
+    return this.inFlightMutating < this.maxConcurrent;
+  }
+
   private drain(): void {
     if (this.disposed) return;
-    while (this.inFlight < this.maxConcurrent && this.pending.length > 0) {
-      const next = this.pending.shift()!;
+    while (this.pending.length > 0) {
+      const next = this.pending[0];
+      if (!this.canDispatch(next.lane)) return;
+      this.pending.shift();
       next.cleanup();
       if (next.signal?.aborted) {
         const reason = signalReason(next.signal);
@@ -276,10 +332,13 @@ export class OperationQueue {
   private async execute<T>(
     opId: string,
     tool: string,
+    lane: OperationLane,
     fn: () => Promise<T>,
     enqueuedAt: number,
   ): Promise<T> {
     this.inFlight += 1;
+    if (lane === "readonly") this.inFlightReadonly += 1;
+    else this.inFlightMutating += 1;
     const startedAt = Date.now();
     const dispatchSequence = ++this.dispatchSequence;
     this.onEvent({
@@ -287,6 +346,7 @@ export class OperationQueue {
       sessionId: this.sessionId,
       opId,
       tool,
+      lane,
       inFlight: this.inFlight,
       queueWaitMs: Math.max(0, startedAt - enqueuedAt),
       dispatchSequence,
@@ -299,6 +359,8 @@ export class OperationQueue {
       throw err;
     } finally {
       this.inFlight -= 1;
+      if (lane === "readonly") this.inFlightReadonly -= 1;
+      else this.inFlightMutating -= 1;
       this.completedTotal += 1;
       this.onEvent({
         kind: "completed",
