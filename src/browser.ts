@@ -115,7 +115,10 @@ class LocalBrowserManager implements BrowserManager {
   async page(): Promise<Page> {
     if (this.currentPage && !this.currentPage.isClosed()) return this.currentPage;
     if (!this.browser || !this.browser.isConnected()) {
-      this.browser = await chromium.launch({ headless: this.headless });
+      this.browser = await chromium.launch({
+        headless: this.headless,
+        chromiumSandbox: true,
+      });
       this.context = null;
       this.currentPage = null;
     }
