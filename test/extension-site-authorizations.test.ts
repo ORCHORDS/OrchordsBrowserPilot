@@ -157,7 +157,7 @@ test("storage key is exported and matches the on-disk contract (#124)", () => {
   assert.equal(STORAGE_KEY_EXPORT, "orchordsSiteAuthorizations");
 });
 
-test("popup exposes allow-once and persistent allow-for-site controls (#124)", async () => {
+test("popup.js wires site authorization with allow-once and persistent allow-for-site controls (#124)", async () => {
   const [popupHtml, popupJs] = await Promise.all([
     readFile(popupHtmlPath, "utf8"),
     readFile(popupJsPath, "utf8"),
