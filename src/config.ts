@@ -40,6 +40,17 @@ const Config = z.object({
     .object({
       headless: booleanFromString.default(true),
       wsEndpoint: z.string().optional(),
+      /**
+       * Issue #106 browser-process isolation policy.
+       *
+       * `trusted-local` preserves the current self-host/developer launch
+       * posture and makes no claim that Chromium's process sandbox is active.
+       * `require-chromium-sandbox` requests Chromium sandboxing and is
+       * intended to fail closed when the host cannot provide it.
+       */
+      isolation: z
+        .enum(["trusted-local", "require-chromium-sandbox"])
+        .default("trusted-local"),
     })
     .default({}),
   captcha: z
@@ -111,6 +122,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     browser: {
       headless: env.PILOT_HEADLESS,
       wsEndpoint: env.BROWSER_WS_ENDPOINT,
+      isolation: env.PILOT_BROWSER_ISOLATION,
     },
     captcha: {
       url: env.PILOT_CAPTCHA_SOLVER_URL,
