@@ -81,3 +81,59 @@ test("forbidden high-authority calls are absent from executable extension source
     assert.doesNotMatch(source, pattern, `forbidden privileged API surfaced: ${pattern}`);
   }
 });
+
+test("inventory preserves the complete canonical forbidden vocabulary (#131)", async () => {
+  const inventory = await readFile(docsPath, "utf8");
+  const forbiddenTokens = [
+    "chrome.debugger",
+    "chrome.scripting",
+    "chrome.webRequest",
+    "chrome.proxy",
+    "chrome.enterprise.platformKeys",
+    "chrome.platformKeys",
+    "chrome.management",
+    "chrome.cookies",
+    "chrome.history",
+    "chrome.contentSettings",
+    "chrome.privacy",
+    "chrome.pageCapture",
+    "chrome.tabCapture",
+    "chrome.desktopCapture",
+    "chrome.identity",
+    "chrome.gcm",
+    "chrome.pushMessaging",
+    "chrome.browsingData",
+    "chrome.downloads",
+    "chrome.tabs.executeScript",
+    "<all_urls>",
+    "chrome.runtime.onConnect",
+  ];
+  for (const token of forbiddenTokens) {
+    assert.ok(inventory.includes(token), `inventory must preserve canonical token ${token}`);
+  }
+
+  const withheldPermissions = [
+    "debugger",
+    "scripting",
+    "tabs",
+    "webRequest",
+    "proxy",
+    "management",
+    "cookies",
+    "history",
+    "contentSettings",
+    "privacy",
+    "pageCapture",
+    "tabCapture",
+    "desktopCapture",
+    "identity",
+    "gcm",
+    "notifications",
+    "browsingData",
+    "downloads",
+    "<all_urls>",
+  ];
+  for (const permission of withheldPermissions) {
+    assert.ok(inventory.includes(`\`${permission}\``), `inventory must explicitly cite withheld permission ${permission}`);
+  }
+});
