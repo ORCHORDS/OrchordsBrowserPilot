@@ -1,6 +1,6 @@
 # Extension Privileged-API Inventory
 
-This is the canonical source-truth inventory for privileged Chrome/Edge API use in the Orchords Web Pilot MV3 extension. It is owned by #131 and is pinned by `test/extension-manifest.test.ts`, `test/extension-privileged-apis.test.ts`, `test/extension-security-boundary.test.ts`, and the #137 extension security matrix.
+This is the canonical source-truth inventory for privileged Chrome/Edge API use in the Orchords Web Pilot MV3 extension. It is owned by #131 and is pinned by `test/extension-manifest.test.ts`, `test/extension-privileged-apis.test.ts`, `test/extension-security-boundary.test.ts`, `test/extension-security-matrix.test.ts`, `test/extension-control-state.test.ts`, and the #137 extension security matrix.
 
 The shipped manifest currently requests exactly `activeTab`, `alarms`, `nativeMessaging`, and `storage`. It has no `host_permissions`, no `externally_connectable`, and no `web_accessible_resources`. Extension pages use `script-src 'self'; object-src 'self';`.
 
@@ -21,6 +21,10 @@ The shipped manifest currently requests exactly `activeTab`, `alarms`, `nativeMe
 
 - Allowed call sites: `extension/service-worker.js`, `extension/popup.js`, and the read-only `extension/content-script.js` bridge listener.
 - The privileged service-worker listener rejects senders whose `sender.id !== chrome.runtime.id` before user-action dispatch. `test/extension-security-boundary.test.ts` executes that real listener with a foreign sender and proves that no control-state broadcast or native connection is triggered.
+
+### `chrome.runtime.onConnect`
+
+- Allowed call site: none today. It remains named in this inventory so any future connected-port runtime listener is an explicit, reviewed authority change rather than an accidental undocumented surface.
 
 ### `chrome.runtime.sendMessage`
 
@@ -61,9 +65,9 @@ The following APIs or permission families are not part of the shipped extension 
 
 | Forbidden API/family | Permission withheld | Owner/regression |
 | --- | --- | --- |
-| `chrome.debugger.attach` / `detach` / `sendCommand` | `debugger` | #131 manifest/source scan |
-| `chrome.scripting.executeScript` / `insertCSS` / `removeCSS` / `registerContentScripts` | `scripting` | #131 manifest/source scan |
-| `chrome.tabs.executeScript` | broad tab/script authority | #131 source scan |
+| `chrome.debugger.attach` / `chrome.debugger.detach` / `chrome.debugger.sendCommand` | `debugger` | #131 manifest/source scan |
+| `chrome.scripting.executeScript` / `chrome.scripting.insertCSS` / `chrome.scripting.removeCSS` / `chrome.scripting.registerContentScripts` | `scripting` | #131 manifest/source scan |
+| `chrome.tabs.executeScript` | `tabs` | #131 source scan |
 | `chrome.webRequest.*` | `webRequest` | #131 manifest/source scan |
 | `chrome.proxy.*` | `proxy` | #131 manifest/source scan |
 | `chrome.cookies.*` | `cookies` | #131 manifest/source scan |
@@ -74,12 +78,14 @@ The following APIs or permission families are not part of the shipped extension 
 | `chrome.management.*` | `management` | #131 manifest/source scan |
 | `chrome.privacy.*` | `privacy` | #131 manifest/source scan |
 | `chrome.pageCapture.*` | `pageCapture` | #131 manifest/source scan |
-| `chrome.tabCapture.*` / `chrome.desktopCapture.*` | capture permissions | #131 source scan |
+| `chrome.tabCapture.*` | `tabCapture` | #131 manifest/source scan |
+| `chrome.desktopCapture.*` | `desktopCapture` | #131 manifest/source scan |
 | `chrome.identity.*` | `identity` | #131 manifest/source scan |
-| `chrome.gcm.*` / push messaging | `gcm` / notifications | #131 manifest/source scan |
+| `chrome.gcm.*` | `gcm` | #131 manifest/source scan |
+| `chrome.pushMessaging.*` | `notifications` | #131 canonical legacy/push authority token scan |
 | `chrome.downloads.*` | `downloads` | #131 manifest/source scan |
 | `chrome.enterprise.platformKeys.*` / `chrome.platformKeys.*` | not requested | #131 source scan |
-| broad host patterns such as `<all_urls>`, `http://*/*`, `https://*/*`, `*://*/*`, `file://*/*` | no host permissions | #131 manifest test |
+| broad host patterns such as `<all_urls>`, `http://*/*`, `https://*/*`, `*://*/*`, `file://*/*` | `<all_urls>` withheld | #131 manifest test |
 | `externally_connectable` page/extension entry points | not configured | #131 manifest/security-boundary tests |
 
 ## Inventory by file
