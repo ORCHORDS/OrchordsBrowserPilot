@@ -9,6 +9,7 @@ test("loadConfig applies defaults", () => {
   assert.equal(cfg.http.port, 8788);
   assert.equal(cfg.browser.headless, true);
   assert.equal(cfg.browser.wsEndpoint, undefined);
+  assert.equal(cfg.browser.isolation, "trusted-local");
 });
 
 test("loadConfig parses http transport", () => {
@@ -24,4 +25,18 @@ test("loadConfig parses http transport", () => {
   assert.equal(cfg.http.port, 9001);
   assert.equal(cfg.browser.headless, false);
   assert.equal(cfg.browser.wsEndpoint, "wss://example.invalid");
+});
+
+test("loadConfig accepts explicit Chromium sandbox isolation mode", () => {
+  const cfg = loadConfig({
+    PILOT_BROWSER_ISOLATION: "require-chromium-sandbox",
+  });
+  assert.equal(cfg.browser.isolation, "require-chromium-sandbox");
+});
+
+test("loadConfig rejects unknown browser isolation mode", () => {
+  assert.throws(
+    () => loadConfig({ PILOT_BROWSER_ISOLATION: "sandbox-if-convenient" }),
+    /Invalid enum value|Invalid option|invalid/i,
+  );
 });
