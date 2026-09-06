@@ -26,7 +26,25 @@ function deterministicNowFactory(stepMs = 1_000) {
 test("grant kind enumeration is frozen and canonical (#124)", () => {
   assert.equal(GRANT_KIND.ONCE, "once");
   assert.equal(GRANT_KIND.SESSION, "session");
+  assert.equal(GRANT_KIND.SITE, "site");
   assert.equal(Object.isFrozen(GRANT_KIND), true);
+});
+
+test("persistent site grants survive durable hydration while legacy session grants do not (#124)", () => {
+  const reg = createSiteAuthorizations();
+  reg.grant("https://site.example.com", GRANT_KIND.SITE);
+  reg.grant("https://session.example.com", GRANT_KIND.SESSION);
+
+  const durable = reg.durableSnapshot();
+  assert.deepEqual(
+    durable.grants.map((entry) => [entry.origin, entry.kind]),
+    [["https://site.example.com", GRANT_KIND.SITE]],
+  );
+
+  const hydrated = createSiteAuthorizations(durable);
+  assert.equal(hydrated.decisionFor("https://site.example.com/path").kind, "allowed");
+  assert.equal(hydrated.decisionFor("https://site.example.com/path").grantKind, GRANT_KIND.SITE);
+  assert.equal(hydrated.decisionFor("https://session.example.com/path").kind, "unknown");
 });
 
 test("canonical origin: lower-cased host, scheme, no default port, no path (#124)", () => {

@@ -4,8 +4,8 @@
 // because it is installed. Every active-tab interaction goes through this
 // module to compute the effective site authorization for an origin and to
 // record every grant / revocation. Grants can be issued by the user
-// (`allow_once`, `allow_for_session`, `revoke_site`, `deny_site`) and can
-// never be issued by page content.
+// (`allow_once`, `allow_for_session`, `allow_for_site`, `revoke_site`, `deny_site`)
+// and can never be issued by page content.
 //
 // Storage is shape-compatible with chrome.storage.local (plain JSON).
 // The registry is the single source of truth for:
@@ -20,11 +20,13 @@
 //   - No userinfo, fragment, or path is kept.
 //
 // A grant is keyed by origin and carries the kind:
-//   - "session" — applies until the user revokes it OR the session ends.
+//   - "site"    — persistent user grant for the origin.
+//   - "session" — transient legacy/session grant; never durable.
 //   - "once"    — applies only to the next single dispatch.
 export const GRANT_KIND = Object.freeze({
   ONCE: "once",
   SESSION: "session",
+  SITE: "site",
 });
 
 const STORAGE_KEY = "orchordsSiteAuthorizations";
@@ -69,7 +71,11 @@ export function createSiteAuthorizations(options = {}) {
   const audit = clampAudit(options.audit ?? [], limit);
 
   for (const entry of options.grants ?? []) {
-    if (entry && isOrigin(entry.origin) && (entry.kind === GRANT_KIND.SESSION || entry.kind === GRANT_KIND.ONCE)) {
+    if (
+      entry &&
+      isOrigin(entry.origin) &&
+      (entry.kind === GRANT_KIND.SITE || entry.kind === GRANT_KIND.SESSION || entry.kind === GRANT_KIND.ONCE)
+    ) {
       grants.set(entry.origin, { kind: entry.kind, grantedAt: Number(entry.grantedAt) || now() });
     }
   }
@@ -119,14 +125,22 @@ export function createSiteAuthorizations(options = {}) {
       }
       return { kind: "allowed", origin, reason: "once grant pending", intent, grantKind: grant.kind };
     }
-    return { kind: "allowed", origin, reason: "session grant", intent, grantKind: grant.kind };
+    return {
+      kind: "allowed",
+      origin,
+      reason: grant.kind === GRANT_KIND.SITE ? "site grant" : "session grant",
+      intent,
+      grantKind: grant.kind,
+    };
   }
 
   function grant(origin, kind) {
     const normalized = originOf(origin);
     if (!normalized) throw new Error("site-authorization grant requires a valid http(s) origin");
-    if (kind !== GRANT_KIND.SESSION && kind !== GRANT_KIND.ONCE) {
-      throw new Error(`site-authorization grant kind must be one of ${GRANT_KIND.SESSION}|${GRANT_KIND.ONCE}`);
+    if (kind !== GRANT_KIND.SITE && kind !== GRANT_KIND.SESSION && kind !== GRANT_KIND.ONCE) {
+      throw new Error(
+        `site-authorization grant kind must be one of ${GRANT_KIND.SITE}|${GRANT_KIND.SESSION}|${GRANT_KIND.ONCE}`,
+      );
     }
     // Granting an origin implicitly lifts any prior deny, and resets any
     // already-consumed "once" token. This is the user's explicit override.
@@ -197,6 +211,15 @@ export function createSiteAuthorizations(options = {}) {
     };
   }
 
+  function durableSnapshot() {
+    return {
+      grants: listGranted().filter((entry) => entry.kind !== GRANT_KIND.SESSION),
+      denials: listDenied(),
+      onceUsed: Array.from(onceUsed),
+      audit: audit.slice(),
+    };
+  }
+
   function exportJson() {
     return JSON.stringify(snapshot());
   }
@@ -212,6 +235,7 @@ export function createSiteAuthorizations(options = {}) {
     getAudit,
     recordAudit,
     snapshot,
+    durableSnapshot,
     exportJson,
   };
 }
