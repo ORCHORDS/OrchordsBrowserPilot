@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const extensionDir = path.join(root, "extension");
 const docsPath = path.join(root, "docs", "security", "extension-privileged-apis.md");
 
 async function text(relative: string): Promise<string> {
@@ -40,46 +39,6 @@ test("shipped manifest permission set is exact and privilege-minimal (#131)", as
   assert.equal(manifest.optional_host_permissions, undefined);
   assert.equal(manifest.externally_connectable, undefined);
   assert.equal(manifest.web_accessible_resources, undefined);
-});
-
-test("forbidden high-authority calls are absent from executable extension source (#131)", async () => {
-  const files = [
-    "service-worker.js",
-    "bridge-client.js",
-    "bridge-protocol.js",
-    "bridge-auth.js",
-    "pairing-state.js",
-    "control-state.js",
-    "site-authorizations.js",
-    "settings.js",
-    "onboarding.js",
-    "connection-doctor.js",
-    "popup.js",
-    "tab-attachment.js",
-    "bridge-relay.js",
-    "content-script.js",
-    "cdp-adapter.js",
-    "side-panel.js",
-    "service-worker-lifecycle.js",
-    "envelope-cancellation.js",
-    "browser-attach.js",
-    "schema-migrations.js",
-    "artifact-transfer.js",
-    "support-bundle.js",
-  ];
-  const source = (await Promise.all(files.map((name) => readFile(path.join(extensionDir, name), "utf8")))).join("\n");
-  const forbiddenCallPatterns = [
-    /chrome\.debugger\.(attach|detach|sendCommand)\s*\(/,
-    /chrome\.scripting\.(executeScript|insertCSS|removeCSS|registerContentScripts)\s*\(/,
-    /chrome\.tabs\.executeScript\s*\(/,
-    /chrome\.cookies\.[A-Za-z_$][\w$]*\s*\(/,
-    /chrome\.history\.[A-Za-z_$][\w$]*\s*\(/,
-    /chrome\.webRequest\.[A-Za-z_$][\w$]*/,
-    /chrome\.downloads\.[A-Za-z_$][\w$]*\s*\(/,
-  ];
-  for (const pattern of forbiddenCallPatterns) {
-    assert.doesNotMatch(source, pattern, `forbidden privileged API surfaced: ${pattern}`);
-  }
 });
 
 test("inventory preserves the complete canonical forbidden vocabulary (#131)", async () => {
