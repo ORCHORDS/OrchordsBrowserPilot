@@ -1,5 +1,11 @@
 import { chromium, type Browser, type Page, type BrowserContext, type ConsoleMessage } from "playwright";
 
+import {
+  browserIsolationLaunchOptions,
+  DEFAULT_BROWSER_ISOLATION_MODE,
+  type BrowserIsolationMode,
+} from "./browser-isolation.js";
+
 export interface BrowserManager {
   page(): Promise<Page>;
   close(): Promise<void>;
@@ -110,12 +116,18 @@ class LocalBrowserManager implements BrowserManager {
   private context: BrowserContext | null = null;
   private currentPage: Page | null = null;
 
-  constructor(private readonly headless: boolean) {}
+  constructor(
+    private readonly headless: boolean,
+    private readonly isolation: BrowserIsolationMode,
+  ) {}
 
   async page(): Promise<Page> {
     if (this.currentPage && !this.currentPage.isClosed()) return this.currentPage;
     if (!this.browser || !this.browser.isConnected()) {
-      this.browser = await chromium.launch({ headless: this.headless });
+      this.browser = await chromium.launch({
+        headless: this.headless,
+        ...browserIsolationLaunchOptions(this.isolation),
+      });
       this.context = null;
       this.currentPage = null;
     }
@@ -197,8 +209,14 @@ class RemoteBrowserManager implements BrowserManager {
   }
 }
 
-export function createBrowserManager(wsEndpoint: string | undefined, headless: boolean): BrowserManager {
-  return wsEndpoint ? new RemoteBrowserManager(wsEndpoint, headless) : new LocalBrowserManager(headless);
+export function createBrowserManager(
+  wsEndpoint: string | undefined,
+  headless: boolean,
+  isolation: BrowserIsolationMode = DEFAULT_BROWSER_ISOLATION_MODE,
+): BrowserManager {
+  return wsEndpoint
+    ? new RemoteBrowserManager(wsEndpoint, headless)
+    : new LocalBrowserManager(headless, isolation);
 }
 
 export type ConsoleSeverity = "debug" | "info" | "warning" | "error";
