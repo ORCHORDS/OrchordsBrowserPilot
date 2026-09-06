@@ -27,7 +27,11 @@ async function main(): Promise<void> {
   const pairingFile = process.env.ORCHORDS_NATIVE_PAIRING_FILE ?? defaultPairingFile();
   const replayFile = process.env.ORCHORDS_NATIVE_REPLAY_FILE ?? `${pairingFile}.replay`;
   const config = loadConfig();
-  const manager = createBrowserManager(config.browser.wsEndpoint, config.browser.headless);
+  const manager = createBrowserManager(
+    config.browser.wsEndpoint,
+    config.browser.headless,
+    config.browser.isolation,
+  );
   const session = new Session(`native:${profileId}`, manager, {
     maxConcurrent: config.operations.maxConcurrent,
     queueMax: config.operations.queueMax,
