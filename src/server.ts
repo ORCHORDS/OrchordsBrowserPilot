@@ -42,7 +42,11 @@ export { toolInputSchema };
  * the BrowserManager itself is reused for the lifetime of the process.
  */
 export async function startStdio(config: Config): Promise<void> {
-  const manager = createBrowserManager(config.browser.wsEndpoint, config.browser.headless);
+  const manager = createBrowserManager(
+    config.browser.wsEndpoint,
+    config.browser.headless,
+    config.browser.isolation,
+  );
   const solver = { url: config.captcha.url, token: config.captcha.token };
   const session = new Session("stdio", manager, {
     maxConcurrent: config.operations.maxConcurrent,
@@ -157,7 +161,11 @@ export async function startHttp(config: Config): Promise<void> {
     const incomingId = headerString(req.headers["mcp-session-id"]);
     const sessionId = incomingId ?? randomUUID();
     const session = registry.getOrCreate(sessionId, (id) => {
-      const manager = createBrowserManager(config.browser.wsEndpoint, config.browser.headless);
+      const manager = createBrowserManager(
+        config.browser.wsEndpoint,
+        config.browser.headless,
+        config.browser.isolation,
+      );
       return new Session(id, manager, {
         maxConcurrent: config.operations.maxConcurrent,
         queueMax: config.operations.queueMax,

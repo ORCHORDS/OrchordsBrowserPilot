@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -28,4 +29,16 @@ test("required Chromium sandbox mode requests fail-closed sandbox launch", () =>
   assert.deepEqual(browserIsolationLaunchOptions("require-chromium-sandbox"), {
     chromiumSandbox: true,
   });
+});
+
+test("stdio and HTTP launch paths forward the validated isolation mode (#106)", async () => {
+  const serverSource = await readFile(new URL("../src/server.ts", import.meta.url), "utf8");
+  const explicitLaunches = serverSource.match(
+    /createBrowserManager\(\s*config\.browser\.wsEndpoint,\s*config\.browser\.headless,\s*config\.browser\.isolation,?\s*\)/g,
+  ) ?? [];
+  assert.equal(
+    explicitLaunches.length,
+    2,
+    "both stdio and HTTP browser-manager construction must forward config.browser.isolation",
+  );
 });
