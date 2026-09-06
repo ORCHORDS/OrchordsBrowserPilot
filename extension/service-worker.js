@@ -146,8 +146,11 @@ const siteAuthzReady = chrome.storage.local
   .then((stored) => {
     const candidate = stored?.[SITE_AUTHZ_STORAGE_KEY];
     if (candidate && typeof candidate === "object") {
+      const durableGrants = Array.isArray(candidate.grants)
+        ? candidate.grants.filter((entry) => entry?.kind !== GRANT_KIND.SESSION)
+        : [];
       siteAuthorizations = createSiteAuthorizations({
-        grants: candidate.grants,
+        grants: durableGrants,
         denials: candidate.denials,
         onceUsed: candidate.onceUsed,
         audit: candidate.audit,
@@ -177,7 +180,7 @@ async function persistControlState() {
 
 async function persistSiteAuthorizations() {
   await chrome.storage.local.set({
-    [SITE_AUTHZ_STORAGE_KEY]: siteAuthorizations.snapshot(),
+    [SITE_AUTHZ_STORAGE_KEY]: siteAuthorizations.durableSnapshot(),
   });
   await broadcastControlState();
 }
@@ -252,8 +255,8 @@ function applySiteAuthorization(action, payload) {
     case "allow_once":
       siteAuthorizations.grant(origin, GRANT_KIND.ONCE);
       break;
-    case "allow_for_session":
-      siteAuthorizations.grant(origin, GRANT_KIND.SESSION);
+    case "allow_for_site":
+      siteAuthorizations.grant(origin, GRANT_KIND.SITE);
       break;
     case "deny_site":
       siteAuthorizations.deny(origin, "user denied");
@@ -425,7 +428,7 @@ chrome.action.onClicked.addListener(() => {
 const USER_ACTIONS = new Set(Object.values(CONTROL_ACTIONS));
 const SITE_AUTHZ_ACTIONS = new Set([
   "allow_once",
-  "allow_for_session",
+  "allow_for_site",
   "deny_site",
   "revoke_site",
 ]);

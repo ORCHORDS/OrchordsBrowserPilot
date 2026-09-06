@@ -48,7 +48,7 @@ const elements = {
   siteTarget: document.getElementById("site-target"),
   siteDecision: document.getElementById("site-decision"),
   siteAllowOnce: document.getElementById("site-allow-once"),
-  siteAllowSession: document.getElementById("site-allow-session"),
+  siteAllowSite: document.getElementById("site-allow-site"),
   siteDenySite: document.getElementById("site-deny-site"),
   siteRevokeSite: document.getElementById("site-revoke-site"),
   siteGrants: document.getElementById("site-grants"),
@@ -169,7 +169,7 @@ function refreshDecision() {
   elements.siteDecision.textContent = `${DECISION_LABEL[decision.kind] ?? decision.reason}`;
 
   elements.siteAllowOnce.disabled = !valid;
-  elements.siteAllowSession.disabled = !valid;
+  elements.siteAllowSite.disabled = !valid;
   elements.siteDenySite.disabled = !valid;
   elements.siteRevokeSite.disabled =
     !valid ||
@@ -244,8 +244,8 @@ elements.siteTarget.addEventListener("input", refreshDecision);
 elements.siteAllowOnce.addEventListener("click", () => {
   dispatch("allow_once", { origin: elements.siteTarget.value.trim() });
 });
-elements.siteAllowSession.addEventListener("click", () => {
-  dispatch("allow_for_session", { origin: elements.siteTarget.value.trim() });
+elements.siteAllowSite.addEventListener("click", () => {
+  dispatch("allow_for_site", { origin: elements.siteTarget.value.trim() });
 });
 elements.siteDenySite.addEventListener("click", () => {
   dispatch("deny_site", { origin: elements.siteTarget.value.trim() });
