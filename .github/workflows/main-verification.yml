@@ -1,10 +1,11 @@
 name: Main Verification
 
-# Only verification lane for ORCHORDS/OrchordsBrowserPilot.
+# Direct-to-main integration lane for ORCHORDS/OrchordsBrowserPilot.
 #
 # Policy: no branches, no PR-only lane. All work lands on `main` via a merge
-# queue (or rebase-merge). CI runs once against the exact SHA that becomes
-# HEAD, on a GitHub-hosted `ubuntu-latest` runner.
+# queue (or rebase-merge). CI validates the exact SHA that becomes HEAD with
+# locked dependencies. Minimum/latest Playwright compatibility is covered by
+# the scheduled Daily Build instead of being repeated on every push.
 on:
   push:
     branches: [main]
@@ -54,50 +55,6 @@ jobs:
           npm run lint
           npm run build
           npm test
-
-  playwright-min:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install locked dependencies
-        run: npm ci
-
-      - name: Force declared minimum Playwright
-        run: npm install --no-save --package-lock=false playwright@1.59.1
-
-      - name: Install minimum-version Chromium
-        run: npx playwright install --with-deps chromium
-
-      - name: Build and exercise minimum-version source path
-        run: |
-          set -euo pipefail
-          node -e "const p=require('./node_modules/playwright/package.json'); if(p.version !== '1.59.1') throw new Error('expected Playwright 1.59.1, got '+p.version)"
-          npm run build
-          node --test --import tsx test/playwright-compatibility.test.ts test/e2e-stdio.test.ts
-
-      - name: Pack, install cleanly, and exercise the published artifact at minimum version
-        shell: bash
-        run: |
-          set -euo pipefail
-          TARBALL="$(npm pack --silent)"
-          FIXTURE="$(mktemp -d)"
-          trap 'rm -rf "$FIXTURE"' EXIT
-          cd "$FIXTURE"
-          npm init -y >/dev/null 2>&1
-          npm install --ignore-scripts "$GITHUB_WORKSPACE/$TARBALL" playwright@1.59.1
-          node -e "const p=require('./node_modules/playwright/package.json'); if(p.version !== '1.59.1') throw new Error('packed fixture expected Playwright 1.59.1, got '+p.version)"
-          node "$GITHUB_WORKSPACE/test/package-smoke.mjs" "$FIXTURE/node_modules/orchords-web-pilot/dist/cli.js"
 
   package:
     runs-on: ubuntu-latest
