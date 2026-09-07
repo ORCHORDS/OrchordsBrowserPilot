@@ -171,7 +171,7 @@ test("popup.js wires site authorization with allow-once and persistent allow-for
   assert.match(popupJs, /site-authorizations\.js/);
 });
 
-test("service-worker persists durable site grants and discards legacy session grants (#124)", async () => {
+test("service-worker.js persists and consults the site-authorization registry (#124)", async () => {
   const sw = await readFile(serviceWorkerPath, "utf8");
   assert.match(sw, /site-authorizations\.js/);
   assert.match(sw, /SITE_AUTHZ_STORAGE_KEY|orchordsSiteAuthorizations/);
