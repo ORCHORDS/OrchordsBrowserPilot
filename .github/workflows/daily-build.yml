@@ -1,9 +1,8 @@
 name: Daily Build
 
-# Scheduled compatibility smoke against the current stable Playwright release.
-# The repository lockfile is tested on every main push; this lane deliberately
-# overrides Playwright with the npm `latest` tag so upstream drift is detected
-# before the supported range or lockfile is changed.
+# Scheduled compatibility sweeps cover both edges of the supported Playwright
+# range. Ordinary main pushes stay focused on locked-dependency verification;
+# this lane catches minimum-version regressions and upstream stable drift.
 on:
   schedule:
     - cron: '23 4 * * *'
@@ -13,6 +12,50 @@ permissions:
   contents: read
 
 jobs:
+  minimum-playwright:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Force declared minimum Playwright
+        run: npm install --no-save --package-lock=false playwright@1.59.1
+
+      - name: Install minimum-version Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build and exercise minimum-version source path
+        run: |
+          set -euo pipefail
+          node -e "const p=require('./node_modules/playwright/package.json'); if(p.version !== '1.59.1') throw new Error('expected Playwright 1.59.1, got '+p.version)"
+          npm run build
+          node --test --import tsx test/playwright-compatibility.test.ts test/e2e-stdio.test.ts
+
+      - name: Pack, install cleanly, and exercise the published artifact at minimum version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARBALL="$(npm pack --silent)"
+          FIXTURE="$(mktemp -d)"
+          trap 'rm -rf "$FIXTURE"' EXIT
+          cd "$FIXTURE"
+          npm init -y >/dev/null 2>&1
+          npm install --ignore-scripts "$GITHUB_WORKSPACE/$TARBALL" playwright@1.59.1
+          node -e "const p=require('./node_modules/playwright/package.json'); if(p.version !== '1.59.1') throw new Error('packed fixture expected Playwright 1.59.1, got '+p.version)"
+          node "$GITHUB_WORKSPACE/test/package-smoke.mjs" "$FIXTURE/node_modules/orchords-web-pilot/dist/cli.js"
+
   latest-playwright:
     runs-on: ubuntu-latest
     timeout-minutes: 30
