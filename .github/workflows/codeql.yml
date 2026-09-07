@@ -1,13 +1,17 @@
 name: CodeQL
 
-# CodeQL on `main` only, weekly schedule, GitHub-hosted runner.
-# (We use hosted here too — no `codeql-verification` self-hosted runner is
-# registered for this repo.)
+# Full static analysis is intentionally off ordinary main source pushes.
+# Exact-SHA lint/build/tests stay in Main Verification; CodeQL revalidates
+# immediately when its own configuration changes, on the weekly sweep, or
+# manually when a full scan is needed.
 on:
   push:
     branches: [main]
+    paths:
+      - '.github/workflows/codeql.yml'
   schedule:
     - cron: '37 5 * * 3'
+  workflow_dispatch:
 
 permissions:
   contents: read
