@@ -20,7 +20,7 @@
 // live credentials.
 
 import { createHash } from "node:crypto";
-import { readFile, writeFile, mkdir, readdir, stat } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
@@ -49,13 +49,14 @@ function dosTime(date) {
 async function buildZipEntries(dir) {
   const entries = [];
   async function walk(current) {
-    const names = (await readdir(current)).sort();
-    for (const name of names) {
-      const abs = path.join(current, name);
-      const st = await stat(abs);
-      if (st.isDirectory()) {
+    const dirents = (await readdir(current, { withFileTypes: true })).sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    );
+    for (const dirent of dirents) {
+      const abs = path.join(current, dirent.name);
+      if (dirent.isDirectory()) {
         await walk(abs);
-      } else {
+      } else if (dirent.isFile()) {
         const rel = path.relative(dir, abs).replace(/\\/g, "/");
         const data = await readFile(abs);
         entries.push({ name: rel, data });

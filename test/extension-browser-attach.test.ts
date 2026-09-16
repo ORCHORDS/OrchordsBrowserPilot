@@ -96,6 +96,7 @@ test("forbidden privileged-API prefixes are refused at runtime (#134)", () => {
   // source scan does not flag this file, but the runtime guard is the
   // real safety boundary and it must trip on each forbidden prefix.
   const attach = createBrowserAttach({ tabsApi: fakeTabsApi([]) });
+  await assert.doesNotReject(() => attach.listOpenTabs());
   // The guard is wired into assertNoForbidden; we assert that the
   // forbidden prefixes cover each privileged API the product refuses.
   for (const method of [

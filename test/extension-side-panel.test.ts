@@ -76,7 +76,7 @@ test("renderSidePanel escapes untrusted origin values (#128)", () => {
   const grantItem = grantsList.children[0];
   // The renderer escapes angle brackets before assigning to textContent
   // so a malicious origin cannot inject HTML or script via the registry.
-  assert.doesNotMatch(grantItem.textContent, /<script>/);
+  assert.doesNotMatch(grantItem.textContent, /<script>/i);
   assert.match(grantItem.textContent, /&lt;script&gt;/);
 });
 

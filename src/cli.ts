@@ -14,6 +14,10 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error("orchords-web-pilot:", err);
+  // Surface only the error name; the message may carry environment
+  // values (e.g. PILOT_CAPTCHA_SOLVER_TOKEN) read by loadConfig that
+  // must not be written to stderr in clear text.
+  const name = err instanceof Error ? err.name : "Error";
+  console.error("orchords-web-pilot:", `${name}: startup failed`);
   process.exit(1);
 });

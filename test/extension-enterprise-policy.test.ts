@@ -8,7 +8,6 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 
 test("extension enterprise policy doc exists and is owned by #139", async () => {
   const doc = path.join(repoRoot, "docs", "security", "extension-enterprise-policy.md");
-  await access(doc);
   const text = await readFile(doc, "utf8");
   assert.match(text, /owned by `#139`/);
   assert.match(text, /test\/extension-enterprise-policy\.test\.ts/);

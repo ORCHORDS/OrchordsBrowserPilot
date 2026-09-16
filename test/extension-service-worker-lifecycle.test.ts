@@ -5,7 +5,6 @@ import {
   DEFAULT_HEARTBEAT_INTERVAL_MS,
   DEFAULT_HEARTBEAT_TIMEOUT_MS,
   SESSION_INFLIGHT_KEY,
-  SESSION_LAST_ACK_KEY,
   createServiceWorkerLifecycle,
 } from "../extension/service-worker-lifecycle.js";
 
@@ -81,7 +80,6 @@ test("SWLifecycle.triggerReconnect runs the backoff schedule (#130)", async () =
   assert.equal(first.ok, true);
   assert.equal(lifecycle.getReconnectAttempts(), 0);
   // Trigger several times in a row to exercise the attempts counter.
-  const beforeAttempts = lifecycle.getReconnectAttempts();
   for (let i = 0; i < 3; i += 1) await lifecycle.triggerReconnect({ reason: "loop" });
   attempts = lifecycle.getReconnectAttempts();
   assert.ok(attempts >= 0, "reconnectAttempts never goes negative");

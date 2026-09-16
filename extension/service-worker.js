@@ -185,11 +185,6 @@ async function persistSiteAuthorizations() {
   await broadcastControlState();
 }
 
-async function persistSettings() {
-  await chrome.storage.local.set({ [SETTINGS_STORAGE_KEY]: settings });
-  await broadcastControlState();
-}
-
 async function persistOnboarding() {
   await persistOnboardingState(chrome.storage.local, onboarding);
   await broadcastControlState();
@@ -293,8 +288,14 @@ async function handleNativeMessage(message) {
     });
     if (!evaluation.ok) {
       console.warn(`[${PRODUCT}] rejected bridge.welcome: ${evaluation.code}`);
-      postEnvelope("bridge.compat.report", createBridgeCompatReport({
+      // Re-encode the received welcome so the report round-trips through
+      // the canonical payload factory instead of trusting the inbound
+      // shape verbatim.
+      const echoedWelcome = createBridgeWelcomePayload({
         coreVersion: message.payload?.coreVersion ?? "unknown",
+      });
+      postEnvelope("bridge.compat.report", createBridgeCompatReport({
+        coreVersion: echoedWelcome.coreVersion,
         extensionVersion: chrome.runtime.getManifest?.()?.version ?? "0.0.0",
       }));
       bridgeCompat = { ok: false, code: evaluation.code };
@@ -415,7 +416,7 @@ async function runSchemaMigrations() {
   const result = runMigrations(rollback.state);
   if (result.ok) {
     await chrome.storage.local.set({ orchordsExtensionRoot: result.state });
-    logLifecycle(`schema migrated to v${result.state._schema}`);
+    logLifecycle(`schema migrated to v${result.state._schema} (current=${CURRENT_SCHEMA_VERSION})`);
   }
 }
 

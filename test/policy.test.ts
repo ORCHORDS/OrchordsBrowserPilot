@@ -83,22 +83,6 @@ function makeGate(
   return { gate, approvals, audit };
 }
 
-/**
- * Drive the propose → gate flow the same way the server does: propose
- * once (which mints a proposalId + envelope digest), then call gate
- * with that proposal. The two calls share the same proposalId, so the
- * TOCTOU check on the same live state succeeds.
- */
-function proposeAndGate(gate: ActionGate, inputs: import("../src/policy/gate.ts").GateInputs) {
-  const proposal = gate.propose(inputs);
-  if (!proposal) throw new Error("propose returned undefined");
-  return gate.gate({
-    ...inputs,
-    proposal: proposal.envelope,
-    proposalEnvelopeDigest: proposal.envelopeDigest,
-  });
-}
-
 describe("policy canonicalization (#81)", () => {
   it("produces byte-deterministic output regardless of key order", () => {
     const a = makeEnvelope({
@@ -786,7 +770,7 @@ describe("summarizeEnvelope (#81)", () => {
     const s = summarizeEnvelope(env);
     assert.match(s, /browser_click/);
     assert.match(s, /sensitive/);
-    assert.match(s, /https:\/\/example\.com/);
+    assert.match(s, /^Destination: https:\/\/example\.com\/?$/m);
     assert.match(s, /cred-x@v7/);
     assert.ok(!s.includes("super-secret-plaintext-2"));
   });

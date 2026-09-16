@@ -317,7 +317,6 @@ const matrix: ReadonlyArray<MatrixEntry> = [
 test("extension security regression matrix is present and pinned (#137)", async () => {
   for (const entry of matrix) {
     const fullPath = path.join(repoRoot, ...entry.relPath.split("/"));
-    await access(fullPath);
     const text = await readFile(fullPath, "utf8");
     for (const keyword of entry.keywords) {
       assert.ok(

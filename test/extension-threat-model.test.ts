@@ -38,7 +38,6 @@ const extensionFiles = [
 ];
 
 test("extension threat model document exists and is owned by #131", async () => {
-  await access(threatModelPath);
   const text = await readFile(threatModelPath, "utf8");
   assert.match(text, /owned by `?#131`?/);
   assert.match(text, /test\/extension-threat-model\.test\.ts/);
