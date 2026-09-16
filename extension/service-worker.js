@@ -31,7 +31,6 @@ import {
 import { createTabAttachment } from "./tab-attachment.js";
 import { createDispatchGate } from "./dispatch-gate.js";
 import {
-  SETTINGS_STORAGE_KEY,
   defaultSettings,
   saveSettings,
   loadSettings,
